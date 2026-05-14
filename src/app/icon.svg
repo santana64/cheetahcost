@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="8" fill="#0e2714"/>
+  <!-- Three amber speed streaks — cheetah running motif -->
+  <line x1="5"  y1="20" x2="27" y2="12" stroke="#f4a321" stroke-width="3"   stroke-linecap="round"/>
+  <line x1="5"  y1="14" x2="27" y2="7"  stroke="#f4a321" stroke-width="2"   stroke-linecap="round" opacity="0.72"/>
+  <line x1="5"  y1="26" x2="27" y2="18" stroke="#f4a321" stroke-width="2"   stroke-linecap="round" opacity="0.55"/>
+  <!-- Green eye — brand signature -->
+  <circle cx="25" cy="7" r="2.8" fill="#56a45b"/>
+  <circle cx="25" cy="7" r="1.6" fill="#00b050"/>
+</svg>
