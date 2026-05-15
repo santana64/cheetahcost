@@ -23,6 +23,7 @@ type Point = {
   cp: number;
   variance: number;
   ecart: number;
+  isBaseline: boolean;
 };
 
 function n0(value: unknown): number {
@@ -42,8 +43,8 @@ function linePath(points: Point[], key: "bad" | "depenses" | "va" | "cp", x: (in
 /**
  * Flèche directionnelle : trait vertical depuis (x, yFrom) vers (x, yTo)
  * avec une seule tête à l'extrémité (yTo). Direction physique respectée.
- * §2.3 — Flèche Vc rouge : Valeur Acquise → Dépenses
- * §2.3 — Flèche E verte  : BàD → CP
+ * §2.3 (NT.26.006) — Flèche Vc rouge : Valeur Acquise → Dépenses
+ * §2.3 (NT.26.006) — Flèche E verte  : BàD → CP
  */
 function Arrow({
   x,
@@ -79,19 +80,17 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
   const unit = getCostUnitLabel(projet);
 
   const data = useMemo(() => {
-    // §2.3 — Tous les B2P doivent apparaître sous l'axe des abscisses (axe du temps).
-    // §3.2 — Les scénarios B2Pi-2j (non retenus) ne sont PAS représentés sur le graphique :
-    // ils partagent la date du B2Pi-1 et créeraient des doublons visuels.
-    // Seuls le B2P0, les B2Pi-1 et le B2Pi-2 « retenu » apparaissent sur l'axe du temps.
+    // §2.2 (NT.26.007) — Tous les B2P apparaissent sur l'axe du temps dès le B2P0.
+    // Les scénarios B2Pi-2j (non retenus) restent masqués (même date que i-1).
     const bilans = sortBilans(projet.bilans ?? []).filter((bilan) => {
       if (getBilanKind(bilan) === "i-2j") return false;
       const agg = aggregateBilan(projet, bilan);
       return agg.totalBudgetADate > 0;
     });
-    const points = bilans.map((bilan) => {
+    const points: Point[] = bilans.map((bilan) => {
       const aggregate = aggregateBilan(projet, bilan);
       const isBaseline = getBilanKind(bilan) === "b2p0";
-      // For B2P0: CP = BàD (no over/under-run at baseline), so Écart = 0
+      // B2P0 : CP = BàD donc Écart = 0. Vc = 0 également.
       const cp = isBaseline ? aggregate.totalBudgetADate : aggregate.totalCPT;
       return {
         id: bilan.id,
@@ -103,16 +102,28 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
         cp,
         variance: isBaseline ? 0 : aggregate.totalVarianceCout,
         ecart: isBaseline ? 0 : aggregate.totalEcartFinal,
-      } satisfies Point;
+        isBaseline,
+      };
     });
+
+    // §2.2 — BI projet (somme des BI des lots) : reste constant sur tous les bilans.
+    const totalBI = (projet.lots ?? []).reduce((sum, lot) => sum + Number(lot.budgetInitial ?? 0), 0);
 
     const activeIndex = Math.max(
       0,
       activeBilanId ? points.findIndex((point) => point.id === activeBilanId) : points.length - 1,
     );
-    const maxY = Math.max(1, ...points.flatMap((point) => [point.bad, point.depenses, point.va, point.cp]));
 
-    return { points, activeIndex: activeIndex >= 0 ? activeIndex : points.length - 1, maxY };
+    // §2.2 — Axe des ordonnées : 10 % au-dessus du plus grand entre BI et toutes valeurs
+    // (BàD, Dépenses, VA, CP) de tous les bilans.
+    const rawMax = Math.max(
+      1,
+      totalBI,
+      ...points.flatMap((point) => [point.bad, point.depenses, point.va, point.cp]),
+    );
+    const maxY = rawMax * 1.1;
+
+    return { points, activeIndex: activeIndex >= 0 ? activeIndex : points.length - 1, maxY, totalBI };
   }, [activeBilanId, projet]);
 
   if (!data.points.length) {
@@ -125,9 +136,11 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
     );
   }
 
+  // §3.1 (NT.26.007) — Légende sous le graphique : on libère la marge droite
+  // et on agrandit la marge basse pour faire de la place à la légende horizontale.
   const W = 980;
-  const H = 520;
-  const pad = { l: 72, r: 180, t: 58, b: 72 };
+  const H = 560;
+  const pad = { l: 84, r: 56, t: 58, b: 120 };
   const iw = W - pad.l - pad.r;
   const ih = H - pad.t - pad.b;
 
@@ -139,14 +152,36 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
   const y = (value: number) => pad.t + ih - (Math.max(0, value) / data.maxY) * ih;
   const active = data.points[data.activeIndex] ?? data.points[data.points.length - 1];
   const activeX = x(data.activeIndex);
-  const varianceX = Math.min(W - pad.r + 30, activeX + 28);
-  const ecartX = Math.min(W - pad.r + 105, activeX + 92);
+  // §2.2 — Au B2P0, Vc et E sont nuls par construction : pas de flèches affichées.
+  const showActiveArrows = !active.isBaseline;
+  const varianceX = Math.min(W - pad.r - 30, activeX + 28);
+  const ecartX = Math.min(W - pad.r - 10, activeX + 92);
 
   const ticks = [
     { value: 0, label: "0" },
     { value: data.maxY * 0.5, label: fmtInt(data.maxY * 0.5) },
     { value: data.maxY, label: fmtInt(data.maxY) },
   ];
+
+  // §2.2 — Position de l'annotation « BI » sur l'axe des ordonnées.
+  const biY = y(data.totalBI);
+
+  // §3.1 — Légende horizontale sous le graphique.
+  // Items : 4 courbes (ligne) + 2 flèches (Vc/E). Positionnées avec un pas fixe.
+  const legendY = H - 36;
+  const legendItems = [
+    { kind: "line" as const, color: "#111827", label: "BàD" },
+    { kind: "line" as const, color: "#BE123C", label: "Dépenses" },
+    { kind: "line" as const, color: "#3730A3", label: "Valeur acquise" },
+    { kind: "line" as const, color: "#047857", label: "CP" },
+    { kind: "arrow" as const, color: "#BE123C", label: "Vc (Variance coût)" },
+    { kind: "arrow" as const, color: "#0A8F3D", label: "E (Écart)" },
+  ];
+  // Largeurs cumulatives par item (label + icône).
+  const itemWidths = [82, 110, 140, 70, 160, 130];
+  const totalLegendWidth = itemWidths.reduce((a, b) => a + b, 0);
+  const legendStartX = pad.l + Math.max(0, (iw - totalLegendWidth) / 2);
+  let legendCursor = legendStartX;
 
   return (
     <div className="h-full w-full rounded-2xl border border-black/10 bg-[#F5F1E8] p-3">
@@ -176,6 +211,33 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
             </g>
           );
         })}
+
+        {/* §2.2 (NT.26.007) — Ligne de référence BI : horizontale, à gauche libellée « BI »
+            avec la valeur du BI. Reste inchangée sur tous les tableaux (BI projet constant). */}
+        {data.totalBI > 0 && (
+          <g>
+            <line
+              x1={pad.l}
+              y1={biY}
+              x2={W - pad.r}
+              y2={biY}
+              stroke="#1F4E79"
+              strokeWidth="1.5"
+              strokeDasharray="6 4"
+              opacity={0.7}
+            />
+            <text
+              x={pad.l - 10}
+              y={biY + 4}
+              textAnchor="end"
+              fontSize="11"
+              fontWeight="700"
+              fill="#1F4E79"
+            >
+              BI {fmtInt(data.totalBI)}
+            </text>
+          </g>
+        )}
 
         <line x1={pad.l} y1={pad.t} x2={pad.l} y2={H - pad.b} stroke="#111827" strokeWidth="1.2" />
         <line x1={pad.l} y1={H - pad.b} x2={W - pad.r} y2={H - pad.b} stroke="#111827" strokeWidth="1.2" />
@@ -211,35 +273,41 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           );
         })}
 
-        {/* §2.3 — Flèche Vc rouge orientée de Valeur Acquise vers Dépenses */}
-        <Arrow x={varianceX} yFrom={y(active.va)} yTo={y(active.depenses)} color="#BE123C" label={`Vc ${fmtInt(active.variance)}`} />
-        {/* §2.3 — Flèche E verte orientée de BàD vers CP */}
-        <Arrow x={ecartX} yFrom={y(active.bad)} yTo={y(active.cp)} color="#0A8F3D" label={`E ${fmtInt(active.ecart)}`} />
+        {/* §2.2 (NT.26.007) — Flèches Vc et E masquées au B2P0 (réduites à 1 point, sans intérêt). */}
+        {showActiveArrows && (
+          <>
+            {/* Flèche Vc rouge orientée de Valeur Acquise vers Dépenses */}
+            <Arrow x={varianceX} yFrom={y(active.va)} yTo={y(active.depenses)} color="#BE123C" label={`Vc ${fmtInt(active.variance)}`} />
+            {/* Flèche E verte orientée de BàD vers CP */}
+            <Arrow x={ecartX} yFrom={y(active.bad)} yTo={y(active.cp)} color="#0A8F3D" label={`E ${fmtInt(active.ecart)}`} />
+          </>
+        )}
 
-        {/* Légende — courbes seulement (Vc et E sont représentés par des flèches sur le graphique, §2.3) */}
-        <g transform={`translate(${W - 155}, ${pad.t})`}>
-          {[
-            ["#111827", "BàD"],
-            ["#BE123C", "Dépenses"],
-            ["#3730A3", "Valeur acquise"],
-            ["#047857", "CP"],
-          ].map(([color, label], index) => (
-            <g key={label} transform={`translate(0, ${index * 24})`}>
-              <line x1="0" y1="0" x2="20" y2="0" stroke={color} strokeWidth="3" />
-              <text x="28" y="4" fontSize="11" fill="#111827">
-                {label}
-              </text>
-            </g>
-          ))}
-          {/* Vc et E dans la légende : flèches directionnelles, pas de traits horizontaux */}
-          <g transform={`translate(0, ${4 * 24})`}>
-            <path d="M 10 -6 L 10 6 M 6 2 L 10 6 L 14 2" fill="none" stroke="#BE123C" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-            <text x="28" y="4" fontSize="11" fill="#111827">Variance coûts (Vc)</text>
-          </g>
-          <g transform={`translate(0, ${5 * 24})`}>
-            <path d="M 10 -6 L 10 6 M 6 2 L 10 6 L 14 2" fill="none" stroke="#0A8F3D" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-            <text x="28" y="4" fontSize="11" fill="#111827">Écart final (E)</text>
-          </g>
+        {/* §3.1 (NT.26.007) — Légende horizontale placée SOUS le graphique. */}
+        <g transform={`translate(0, ${legendY})`}>
+          {legendItems.map((item, i) => {
+            const cx = legendCursor;
+            legendCursor += itemWidths[i];
+            return (
+              <g key={item.label} transform={`translate(${cx}, 0)`}>
+                {item.kind === "line" ? (
+                  <line x1="0" y1="0" x2="20" y2="0" stroke={item.color} strokeWidth="3" />
+                ) : (
+                  <path
+                    d="M 10 -7 L 10 7 M 6 3 L 10 7 L 14 3"
+                    fill="none"
+                    stroke={item.color}
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )}
+                <text x="28" y="4" fontSize="11" fill="#111827">
+                  {item.label}
+                </text>
+              </g>
+            );
+          })}
         </g>
       </svg>
     </div>

@@ -584,7 +584,7 @@ export default function B2PPage() {
             >
               <span
                 className="rounded px-1.5 py-0.5 text-[9px] font-black tracking-wide"
-                style={{ background: "#56a45b", color: "#fff" }}
+                style={{ background: "#1F4E79", color: "#fff" }}
               >
                 FGF
               </span>
@@ -907,14 +907,23 @@ export default function B2PPage() {
               filterMode={filterMode}
               query={lineQuery}
             />
-            {/* §3.1 — Bas du tableau à droite : logo FGF (texte stylisé en vert). */}
+            {/* §2.1 (NT.26.007) — Bas du tableau : logo FGF officiel (bleu, texte blanc). */}
             <div className="mt-2 flex items-center justify-between px-2 text-[10px] text-slate-400">
-              <span>Méthode FGF du Reste à Faire — CheetahCost</span>
+              <span className="flex items-center gap-2">
+                <span
+                  className="inline-flex items-center rounded px-2 py-0.5 text-[11px] font-black tracking-wide"
+                  style={{ background: "#1F4E79", color: "#FFFFFF" }}
+                  title="Méthode FGF de Coûtenance"
+                >
+                  FGF
+                </span>
+                <span>Méthode FGF de Coûtenance — CheetahCost</span>
+              </span>
               <span className="flex items-center gap-2">
                 <span>Recherche · Conseil · Formation en Management de Projet</span>
                 <span
-                  className="rounded px-2 py-0.5 text-[11px] font-black tracking-wide"
-                  style={{ background: "#00B050", color: "#FFFFFF" }}
+                  className="inline-flex items-center rounded px-2 py-0.5 text-[11px] font-black tracking-wide"
+                  style={{ background: "#1F4E79", color: "#FFFFFF" }}
                   title="Méthode FGF de Coûtenance"
                 >
                   FGF
@@ -926,7 +935,10 @@ export default function B2PPage() {
 
         {/* ─ Right Panel ─ */}
         {rightPanelOpen ? (
-          <div className="relative hidden lg:block">
+          // §2.3 (NT.26.007) — Le panneau doit pouvoir se scroller en entier.
+          // On force height: 100% sur le wrapper ET sur le conteneur scrollable
+          // pour que `overflow-y-auto` se déclenche au lieu de couper le bas.
+          <div className="relative hidden lg:block" style={{ height: "100%" }}>
             {/* Resize handle */}
             <div
               onMouseDown={() => { resizingRef.current = true; }}
@@ -935,7 +947,7 @@ export default function B2PPage() {
             />
             <div
               className="overflow-y-auto border-l border-slate-200 bg-white/95 px-4 py-4"
-              style={{ width: panelW }}
+              style={{ width: panelW, height: "100%" }}
             >
               {/* §2.4 — Bouton Fermer en haut du panneau (au lieu du masquer/montrer implicite). */}
               <div className="mb-3 flex items-center justify-between">

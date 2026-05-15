@@ -35,6 +35,18 @@ function fmtPrecFR(value: number, precision: number): string {
   });
 }
 
+/**
+ * §5.1 (NT.26.007) — Format « intelligent » utilisé sur la ligne « Projet » :
+ * affiche jusqu'à `precision` décimales mais supprime les zéros inutiles.
+ * Ex. (precision=1) : 100 → « 100 », 100,5 → « 100,5 », 100,55 → « 100,6 ».
+ */
+function fmtPrecSmart(value: number, precision: number): string {
+  return n0(value).toLocaleString("fr-FR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: precision,
+  });
+}
+
 /** @deprecated use fmtPrecFR(value, precision) */
 function fmtIntFR(value: number): string {
   return fmtPrecFR(value, 0);
@@ -64,6 +76,8 @@ export function B2PTable({ projet, bilan, previousBilan, onChangeLigne, showForm
   const isB2P0 = b2pKind === "b2p0";
   const precision = Math.max(0, Math.min(4, Number(projet.precision ?? 0)));
   const fmt = (v: number) => fmtPrecFR(v, precision);
+  // §5.1 (NT.26.007) — Formatage « intelligent » réservé à la ligne « Projet ».
+  const fmtSmart = (v: number) => fmtPrecSmart(v, precision);
   /** When the previous bilan is B2P0, its "écart" is meaningless (no actuals) — treat ePrec as 0 */
   const prevKind: BilanTableKind | null = previousBilan ? getBilanKind(previousBilan) : null;
   const prevIsB2P0 = prevKind === "b2p0";
@@ -120,6 +134,7 @@ export function B2PTable({ projet, bilan, previousBilan, onChangeLigne, showForm
     let bi = 0;
     let variation = 0;
     let bad = 0;
+    let badNonPTO = 0; // §2.4 (NT.26.007) — dénominateur de l'avancement physique du projet
     let depenses = 0;
     let va = 0;
     let raf = 0;
@@ -127,13 +142,14 @@ export function B2PTable({ projet, bilan, previousBilan, onChangeLigne, showForm
     let e = 0;
     let ePrec = 0;
     let d = 0;
-    let weightedAvancement = 0;
 
     for (const row of allRows) {
       const derives = computeLigneDerivesFGF(row.lot, row.line, row.previousLine);
+      const ptoRow = isPTOLot(row.lot);
       bi += derives.budgetInitial;
       variation += derives.variation;
       bad += derives.budgetADate;
+      if (!ptoRow) badNonPTO += derives.budgetADate;
       depenses += derives.depenses;
       va += derives.valeurAcquise;
       raf += derives.resteAFaire;
@@ -141,7 +157,6 @@ export function B2PTable({ projet, bilan, previousBilan, onChangeLigne, showForm
       e += derives.e;
       ePrec += derives.ePrec;
       d += derives.d;
-      weightedAvancement += derives.budgetADate * derives.avancementPhysique;
     }
 
     return {
@@ -149,7 +164,8 @@ export function B2PTable({ projet, bilan, previousBilan, onChangeLigne, showForm
       variation,
       bad,
       depenses,
-      avancement: bad > 0 ? weightedAvancement / bad / 100 : null,
+      // §2.4 — Avancement physique projet = Σ(VA) / (Σ(BàD) − PTO). PTO exclu du dénominateur.
+      avancement: badNonPTO > 0 ? va / badNonPTO : null,
       va,
       raf,
       cp,
@@ -337,25 +353,27 @@ export function B2PTable({ projet, bilan, previousBilan, onChangeLigne, showForm
           {rows.map(({ lot, line, previousLine }) => {
             const derives = computeLigneDerivesFGF(lot, line, previousLine);
             const isPTO = isPTOLot(lot);
-            // §3.2 (Nota 1) — Pour les tableaux B2Pi-2j et B2Pi-2 « retenus » :
-            // Variation, Dépenses et Avancement physique ne changent pas (héritent du B2Pi-1).
-            // Seul RàF est modifiable.
+            // §3.2 (NT.26.006) — Tableaux B2Pi-2j / B2Pi-2 retenus : Variation, Dépenses et
+            // Avancement physique ne changent pas (héritent du B2Pi-1). Seul RàF est modifiable.
             const isI2Variant = b2pKind === "i-2" || b2pKind === "i-2j";
             const lockExecution = readOnly || isB2P0 || isPTO || isI2Variant;
-            // RàF reste éditable dans B2Pi-2j (Nota 1) et même après promotion en B2Pi-2.
-            const lockRAF = readOnly || isB2P0;
-            // §3.2 — Variation locked dans les tableaux B2Pi-2 et B2Pi-2j (le budget ne change pas
-            // d'un scénario à l'autre — seules les hypothèses de RàF varient).
+            // §4.1 (NT.26.007) — Les valeurs de la colonne RàF doivent pouvoir être modifiées,
+            // y compris dans les tableaux B2Pi-2j. RàF n'est verrouillé qu'en lecture seule.
+            const lockRAF = readOnly;
+            // Variation : verrouillée dans les tableaux i-2 / i-2j (budget non modifiable
+            // entre scénarios — confirmé §4.1 « Variations de Budget interdites entre i-1 et i-2j »).
             const lockBudget = readOnly || isI2Variant;
             const greyForecast = isPTO ? { background: S.grey } : {};
 
             return (
               <tr key={lot.id}>
-                <td style={{ ...tdSticky1, background: isPTO ? S.grey : S.white }}>{lot.code ?? ""}</td>
-                <td style={{ ...tdSticky2, background: isPTO ? S.grey : S.white }}>{lot.libelle ?? ""}</td>
+                {/* §2.1 (NT.26.007) — Les cases Code (« PTO ») et Libellé (« Provision… Oubliées »)
+                    ne doivent PLUS être grisées sur la ligne PTO. */}
+                <td style={tdSticky1}>{lot.code ?? ""}</td>
+                <td style={tdSticky2}>{lot.libelle ?? ""}</td>
                 <td style={tdRight}>{showFormulas ? formula("BI") : fmt(derives.budgetInitial)}</td>
-                {/* §3.2 — Variation : verrouillée dans les tableaux B2Pi-2 / B2Pi-2j. */}
-                <td style={{ ...tdRight, background: lockBudget && isI2Variant ? S.grey : tdBase.background }}>
+                {/* §4.1 (NT.26.007) — Variation : verrouillée en i-2/i-2j mais PAS grisée. */}
+                <td style={tdRight}>
                   <input
                     disabled={lockBudget}
                     style={{ ...(lockBudget ? lockedInput : inputBase), textAlign: "right" }}
@@ -393,11 +411,12 @@ export function B2PTable({ projet, bilan, previousBilan, onChangeLigne, showForm
                 </td>
                 {/* Valeur Acquise — grey only for PTO line (PTO has no avancement physique) */}
                 <td style={{ ...tdRight, color: S.blue, fontWeight: 700, background: isPTO ? S.grey : S.white }}>{isPTO ? "" : (showFormulas ? formula("Val. Acquise") : fmt(isB2P0 ? 0 : derives.valeurAcquise))}</td>
-                {/* RàF — editable in all bilans, BàD-initialized for B2P0 */}
-                <td style={{ ...tdRight, background: lockBudget ? S.grey : S.white }}>
+                {/* §4.1 (NT.26.007) — RàF : éditable dans tous les bilans (y compris i-2j),
+                    initialisée à BàD au B2P0, JAMAIS grisée. */}
+                <td style={tdRight}>
                   <input
-                    disabled={lockBudget}
-                    style={{ ...(lockBudget ? lockedInput : inputBase), textAlign: "right", color: lockBudget ? "#6B7280" : S.rafGreen, fontWeight: 700 }}
+                    disabled={lockRAF}
+                    style={{ ...(lockRAF ? lockedInput : inputBase), textAlign: "right", color: lockRAF ? "#6B7280" : S.rafGreen, fontWeight: 700 }}
                     value={textValue(isB2P0 && Number(line.resteAFaire ?? 0) === 0 ? derives.budgetADate : line.resteAFaire)}
                     onChange={(event) => commit(lot, "resteAFaire", event.target.value)}
                   />
@@ -432,23 +451,30 @@ export function B2PTable({ projet, bilan, previousBilan, onChangeLigne, showForm
             ))}
           </tr>
 
-          {/* Projet — totaux. Pour B2P0 : CP = BàD, E = 0 (§2.1). Formules sur Projet (§3.2) */}
+          {/* Projet — totaux. Pour B2P0 : CP = BàD, E = 0 (§2.1 NT.26.006).
+              §2.4 (NT.26.007) — Formules niveau projet :
+                Avancement physique = Σ(VA) / (Σ(BàD) − PTO)
+                E = CP − BàD
+                Epr = E(B2P précédent)
+                D  = E − Epréc.
+              §5.1 (NT.26.007) — Format intelligent : 0 décimale minimum, `precision`
+              décimales maximum (suppression des zéros inutiles). */}
           <tr>
             <td style={{ ...thSticky1, textAlign: "center" }} colSpan={2}>
               Projet
             </td>
-            <td style={{ ...thBase, textAlign: "right" }}>{showFormulas ? "=Σ(BI)" : fmt(totals.bi)}</td>
-            <td style={{ ...thBase, textAlign: "right" }}>{showFormulas ? "=Σ(Variation)" : fmt(totals.variation)}</td>
-            <td style={{ ...thBase, textAlign: "right" }}>{showFormulas ? "=Σ(BàD)" : fmt(totals.bad)}</td>
-            <td style={{ ...thBase, textAlign: "right", color: S.red }}>{showFormulas ? "=Σ(Dépenses)" : (isB2P0 ? "0" : fmt(totals.depenses))}</td>
-            <td style={{ ...thBase, textAlign: "center" }}>{showFormulas ? "=Σ(VA)/Σ(BàD)" : (isB2P0 ? "0 %" : fmtPct(totals.avancement))}</td>
-            <td style={{ ...thBase, textAlign: "right", color: S.blue }}>{showFormulas ? "=Σ(VA)" : (isB2P0 ? "0" : fmt(totals.va))}</td>
-            <td style={{ ...thBase, textAlign: "right", color: S.rafGreen }}>{showFormulas ? "=Σ(RàF)" : (isB2P0 ? fmt(totals.bad) : fmt(totals.raf))}</td>
-            <td style={{ ...thBase, textAlign: "right" }}>{showFormulas ? "=Σ(CP)" : (isB2P0 ? fmt(totals.bad) : fmt(totals.cp))}</td>
-            <td style={{ ...thBase, textAlign: "right" }}>{showFormulas ? "=Σ(E)" : (isB2P0 ? "0" : fmt(totals.e))}</td>
-            <td style={{ ...thBase, textAlign: "center" }}>{showFormulas ? "=Σ(E)/Σ(BàD)" : (isB2P0 ? "0 %" : fmtPct(totals.eOverBad))}</td>
-            <td style={{ ...thBase, textAlign: "center" }}>{showFormulas ? "=Σ(E préc.)" : (isB2P0 ? "0" : fmt(totals.ePrec))}</td>
-            <td style={{ ...thBase, textAlign: "center" }}>{showFormulas ? "=Σ(D)" : (isB2P0 ? "0" : fmt(totals.d))}</td>
+            <td style={{ ...thBase, textAlign: "right" }}>{showFormulas ? "=Σ(BI)" : fmtSmart(totals.bi)}</td>
+            <td style={{ ...thBase, textAlign: "right" }}>{showFormulas ? "=Σ(Variation)" : fmtSmart(totals.variation)}</td>
+            <td style={{ ...thBase, textAlign: "right" }}>{showFormulas ? "=Σ(BàD)" : fmtSmart(totals.bad)}</td>
+            <td style={{ ...thBase, textAlign: "right", color: S.red }}>{showFormulas ? "=Σ(Dépenses)" : (isB2P0 ? fmtSmart(0) : fmtSmart(totals.depenses))}</td>
+            <td style={{ ...thBase, textAlign: "center" }}>{showFormulas ? "=Σ(VA)/(Σ(BàD)−PTO)" : (isB2P0 ? "0 %" : fmtPct(totals.avancement))}</td>
+            <td style={{ ...thBase, textAlign: "right", color: S.blue }}>{showFormulas ? "=Σ(VA)" : (isB2P0 ? fmtSmart(0) : fmtSmart(totals.va))}</td>
+            <td style={{ ...thBase, textAlign: "right", color: S.rafGreen }}>{showFormulas ? "=Σ(RàF)" : (isB2P0 ? fmtSmart(totals.bad) : fmtSmart(totals.raf))}</td>
+            <td style={{ ...thBase, textAlign: "right" }}>{showFormulas ? "=Σ(CP)" : (isB2P0 ? fmtSmart(totals.bad) : fmtSmart(totals.cp))}</td>
+            <td style={{ ...thBase, textAlign: "right" }}>{showFormulas ? "=CP−BàD" : (isB2P0 ? fmtSmart(0) : fmtSmart(totals.e))}</td>
+            <td style={{ ...thBase, textAlign: "center" }}>{showFormulas ? "=E/BàD" : (isB2P0 ? "0 %" : fmtPct(totals.eOverBad))}</td>
+            <td style={{ ...thBase, textAlign: "center" }}>{showFormulas ? "=E(B2P précédent)" : (isB2P0 ? fmtSmart(0) : fmtSmart(totals.ePrec))}</td>
+            <td style={{ ...thBase, textAlign: "center" }}>{showFormulas ? "=E−Epréc." : (isB2P0 ? fmtSmart(0) : fmtSmart(totals.d))}</td>
             <td style={thBase} colSpan={2} />
           </tr>
         </tbody>
