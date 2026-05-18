@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { getBilanKind, getBilanLabel } from "@/lib/b2p";
 import type { BilanTableKind } from "@/types/projet";
@@ -68,6 +68,77 @@ function clampPct(value: number): number {
 
 function textValue(value: unknown) {
   return String(value ?? "");
+}
+
+/**
+ * §6 (NT.26.008) — Affichage français des valeurs numériques dans les inputs éditables :
+ *   - Virgule décimale ("0,5" et non "0.5")
+ *   - Suppression des zéros de queue inutiles
+ *   - Vide si la valeur est 0 ou nulle (l'utilisateur saisit librement)
+ */
+function fmtInputFR(value: unknown, precision: number): string {
+  if (value === null || value === undefined || value === "") return "";
+  const num = Number(value);
+  if (!Number.isFinite(num) || num === 0) return "";
+  return num.toLocaleString("fr-FR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: Math.max(precision, 4),
+  });
+}
+
+/**
+ * §6 (NT.26.008) — Champ numérique avec saisie française.
+ *
+ * Le composant maintient un brouillon local (`draft`) tant que l'utilisateur tape :
+ * le brouillon est ce qui s'affiche, indépendamment de la valeur committée. Cela
+ * permet de saisir « 0, » puis « 5 » sans perdre la virgule entre deux re-rendus.
+ *
+ * Au blur (perte de focus) on parse via `parseFRNumber` (accepte virgule OU point)
+ * et on commit la valeur numérique normalisée vers le store. Quand la valeur
+ * change depuis l'extérieur (undo/redo, propagation i-1 → i-2j), le brouillon
+ * est synchronisé automatiquement via `draft === null`.
+ */
+function NumberCellInput({
+  value,
+  precision,
+  disabled,
+  style,
+  onCommit,
+  format = fmtInputFR,
+}: {
+  value: unknown;
+  precision: number;
+  disabled?: boolean;
+  style: React.CSSProperties;
+  onCommit: (next: number) => void;
+  /** Permet de surcharger le format (utilisé pour Avancement physique : entier). */
+  format?: (value: unknown, precision: number) => string;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const display = draft !== null ? draft : format(value, precision);
+
+  return (
+    <input
+      disabled={disabled}
+      style={style}
+      value={display}
+      onFocus={(event) => {
+        setDraft(format(value, precision));
+        // Sélectionne tout pour faciliter le remplacement.
+        event.currentTarget.select();
+      }}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        if (draft !== null) onCommit(parseFRNumber(draft));
+        setDraft(null);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
 }
 
 export function B2PTable({ projet, bilan, previousBilan, onChangeLigne, showFormulas, readOnly, filterMode = "all", query = "" }: B2PTableProps) {
@@ -372,53 +443,78 @@ export function B2PTable({ projet, bilan, previousBilan, onChangeLigne, showForm
                 <td style={tdSticky1}>{lot.code ?? ""}</td>
                 <td style={tdSticky2}>{lot.libelle ?? ""}</td>
                 <td style={tdRight}>{showFormulas ? formula("BI") : fmt(derives.budgetInitial)}</td>
-                {/* §4.1 (NT.26.007) — Variation : verrouillée en i-2/i-2j mais PAS grisée. */}
+                {/* §4.1 (NT.26.007) — Variation : verrouillée en i-2/i-2j mais PAS grisée.
+                    §6 (NT.26.008) — Saisie en format français (virgule décimale). */}
                 <td style={tdRight}>
-                  <input
+                  <NumberCellInput
+                    value={line.variation}
+                    precision={precision}
                     disabled={lockBudget}
                     style={{ ...(lockBudget ? lockedInput : inputBase), textAlign: "right" }}
-                    value={textValue(line.variation)}
-                    onChange={(event) => commit(lot, "variation", event.target.value)}
+                    onCommit={(next) => onChangeLigne(lot.id, { variation: next })}
                   />
                 </td>
                 <td style={tdRight}>{showFormulas ? formula("BàD") : fmt(derives.budgetADate)}</td>
-                {/* Dépenses — PTO : grey + empty ; B2P0 non-PTO : 0 lisible, pas de grey */}
+                {/* Dépenses — PTO : grey + empty ; B2P0 non-PTO : 0 lisible, pas de grey
+                    §6 (NT.26.008) — Saisie en format français. */}
                 <td style={{ ...tdRight, background: isPTO ? S.grey : S.white }}>
-                  <input
-                    disabled={lockExecution}
-                    style={{ ...(lockExecution ? lockedInput : inputBase), textAlign: "right", color: lockExecution ? "#6B7280" : S.red }}
-                    value={isPTO ? "" : (isB2P0 ? "0" : textValue(line.depenses))}
-                    onChange={(event) => commit(lot, "depenses", event.target.value)}
-                  />
+                  {isPTO ? (
+                    <input disabled style={{ ...lockedInput, textAlign: "right" }} value="" readOnly />
+                  ) : isB2P0 ? (
+                    <input disabled style={{ ...lockedInput, textAlign: "right", color: "#6B7280" }} value="0" readOnly />
+                  ) : (
+                    <NumberCellInput
+                      value={line.depenses}
+                      precision={precision}
+                      disabled={lockExecution}
+                      style={{ ...(lockExecution ? lockedInput : inputBase), textAlign: "right", color: lockExecution ? "#6B7280" : S.red }}
+                      onCommit={(next) => onChangeLigne(lot.id, { depenses: next })}
+                    />
+                  )}
                 </td>
-                {/* Avancement physique — PTO : grey + empty (pas de %) ; B2P0 : 0 % */}
+                {/* Avancement physique — PTO : grey + empty (pas de %) ; B2P0 : 0 %
+                    §6 (NT.26.008) — Saisie en format français (entier 0–100). */}
                 <td style={{ ...tdCenter, background: isPTO ? S.grey : S.white }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                    <input
-                      disabled={lockExecution}
-                      style={{
-                        ...(lockExecution ? lockedInput : inputBase),
-                        width: 34,
-                        textAlign: "right",
-                        color: lockExecution ? "#6B7280" : S.blue,
-                        fontWeight: 700,
-                      }}
-                      value={isPTO ? "" : (isB2P0 ? "0" : `${Math.round(n0(line.avancementPhysique))}`)}
-                      onChange={(event) => commit(lot, "avancementPhysique", event.target.value)}
-                    />
+                    {isPTO ? (
+                      <input disabled style={{ ...lockedInput, width: 34, textAlign: "right" }} value="" readOnly />
+                    ) : isB2P0 ? (
+                      <input
+                        disabled
+                        style={{ ...lockedInput, width: 34, textAlign: "right", color: "#6B7280", fontWeight: 700 }}
+                        value="0"
+                        readOnly
+                      />
+                    ) : (
+                      <NumberCellInput
+                        value={line.avancementPhysique}
+                        precision={0}
+                        disabled={lockExecution}
+                        style={{
+                          ...(lockExecution ? lockedInput : inputBase),
+                          width: 34,
+                          textAlign: "right",
+                          color: lockExecution ? "#6B7280" : S.blue,
+                          fontWeight: 700,
+                        }}
+                        onCommit={(next) => onChangeLigne(lot.id, { avancementPhysique: clampPct(next) })}
+                      />
+                    )}
                     {!isPTO && <span style={{ color: lockExecution ? "#6B7280" : S.blue, fontWeight: 700 }}>%</span>}
                   </div>
                 </td>
                 {/* Valeur Acquise — grey only for PTO line (PTO has no avancement physique) */}
                 <td style={{ ...tdRight, color: S.blue, fontWeight: 700, background: isPTO ? S.grey : S.white }}>{isPTO ? "" : (showFormulas ? formula("Val. Acquise") : fmt(isB2P0 ? 0 : derives.valeurAcquise))}</td>
                 {/* §4.1 (NT.26.007) — RàF : éditable dans tous les bilans (y compris i-2j),
-                    initialisée à BàD au B2P0, JAMAIS grisée. */}
+                    initialisée à BàD au B2P0, JAMAIS grisée.
+                    §6 (NT.26.008) — Saisie en format français (virgule décimale). */}
                 <td style={tdRight}>
-                  <input
+                  <NumberCellInput
+                    value={isB2P0 && Number(line.resteAFaire ?? 0) === 0 ? derives.budgetADate : line.resteAFaire}
+                    precision={precision}
                     disabled={lockRAF}
                     style={{ ...(lockRAF ? lockedInput : inputBase), textAlign: "right", color: lockRAF ? "#6B7280" : S.rafGreen, fontWeight: 700 }}
-                    value={textValue(isB2P0 && Number(line.resteAFaire ?? 0) === 0 ? derives.budgetADate : line.resteAFaire)}
-                    onChange={(event) => commit(lot, "resteAFaire", event.target.value)}
+                    onCommit={(next) => onChangeLigne(lot.id, { resteAFaire: next })}
                   />
                 </td>
                 {/* CP — for B2P0 : CP = BàD (per §2.1); for PTO : grey on E→D block */}

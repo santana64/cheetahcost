@@ -582,12 +582,14 @@ export default function B2PPage() {
               className="flex items-center gap-1.5 rounded-md px-2.5 py-1"
               style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.06)" }}
             >
-              <span
-                className="rounded px-1.5 py-0.5 text-[9px] font-black tracking-wide"
-                style={{ background: "#1F4E79", color: "#fff" }}
-              >
-                FGF
-              </span>
+              {/* §5 (NT.26.008) — Logo FGF officiel dans la toolbar (image PNG). */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/logo-fgf.png"
+                alt="FGF"
+                title="FGF — Management de Projet"
+                style={{ height: 18, width: "auto", display: "block" }}
+              />
               <span className="max-w-[150px] truncate text-[11px] font-semibold text-slate-700">
                 {project.nom}
               </span>
@@ -907,27 +909,27 @@ export default function B2PPage() {
               filterMode={filterMode}
               query={lineQuery}
             />
-            {/* §2.1 (NT.26.007) — Bas du tableau : logo FGF officiel (bleu, texte blanc). */}
-            <div className="mt-2 flex items-center justify-between px-2 text-[10px] text-slate-400">
+            {/* §5 (NT.26.008) — Bas du tableau : logo FGF officiel (image PNG fournie). */}
+            <div className="mt-2 flex items-center justify-between gap-3 px-2 text-[10px] text-slate-400">
               <span className="flex items-center gap-2">
-                <span
-                  className="inline-flex items-center rounded px-2 py-0.5 text-[11px] font-black tracking-wide"
-                  style={{ background: "#1F4E79", color: "#FFFFFF" }}
-                  title="Méthode FGF de Coûtenance"
-                >
-                  FGF
-                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/logo-fgf.png"
+                  alt="FGF — Management de Projet, Recherche · Conseil · Formation"
+                  title="FGF — Management de Projet"
+                  style={{ height: 28, width: "auto", display: "block" }}
+                />
                 <span>Méthode FGF de Coûtenance — CheetahCost</span>
               </span>
               <span className="flex items-center gap-2">
                 <span>Recherche · Conseil · Formation en Management de Projet</span>
-                <span
-                  className="inline-flex items-center rounded px-2 py-0.5 text-[11px] font-black tracking-wide"
-                  style={{ background: "#1F4E79", color: "#FFFFFF" }}
-                  title="Méthode FGF de Coûtenance"
-                >
-                  FGF
-                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/logo-fgf.png"
+                  alt="FGF — Management de Projet"
+                  title="FGF — Management de Projet"
+                  style={{ height: 28, width: "auto", display: "block" }}
+                />
               </span>
             </div>
           </div>

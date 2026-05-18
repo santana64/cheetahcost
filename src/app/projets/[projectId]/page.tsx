@@ -25,7 +25,7 @@ import {
   getBilanLabel,
   getProjectPlannedB2PDates,
 } from "@/lib/b2p";
-import { getLastBilan, sortBilans } from "@/lib/fgf";
+import { getLastBilan, isPTOLot, sortBilans } from "@/lib/fgf";
 import { formatDateFR } from "@/lib/dates";
 import { formatMoneyLike, getCostUnitLabel } from "@/lib/projectLabels";
 import { getProjectDecisionSummary } from "@/lib/projectHealth";
@@ -177,10 +177,40 @@ export default function ProjectPage() {
   const handlePlanDateChange = (index: number, date: string) => {
     if (!project) return;
     const nextDates = plannedDates.map((d, i) => (i === index ? date : d));
+    // §4 (NT.26.008) — Si le projet prend du retard, le décalage d'une date B2P peut
+    // dépasser la date de fin actuelle : on l'étend automatiquement plutôt que de
+    // bloquer la saisie. La nouvelle date de fin = max(ancienne dateFin, nouvelle date).
+    const newDateFin = date > project.dateFin ? date : project.dateFin;
+    const projectUpdate = newDateFin !== project.dateFin ? { dateFin: newDateFin } : {};
     persist(
-      { ...project, b2pDates: nextDates, nbB2P: Math.max(0, nextDates.length - 1) },
-      undefined,
+      { ...project, ...projectUpdate, b2pDates: nextDates, nbB2P: Math.max(0, nextDates.length - 1) },
+      newDateFin !== project.dateFin ? `Projet étendu jusqu'au ${formatDateFR(newDateFin)}.` : undefined,
       { action: "plan_updated", label: "Date B2P modifiée", details: `Index ${index} : ${formatDateFR(date)}` },
+    );
+  };
+
+  // §4 (NT.26.008) — Ajouter un B2P supplémentaire à la fin (retard projet).
+  // Le nouveau B2P est placé entre la dernière date B2P et la date de fin du projet ;
+  // si la dernière B2P = dateFin, on étend dateFin d'un pas équivalent au dernier écart.
+  const addExtraB2P = () => {
+    if (!project) return;
+    const dates = [...plannedDates];
+    const last = dates[dates.length - 1] ?? project.dateDebut;
+    const previous = dates[dates.length - 2] ?? project.dateDebut;
+    // Estime un pas raisonnable = écart entre les 2 derniers B2P (sinon 30 jours).
+    const lastDate = new Date(last + "T12:00:00Z");
+    const prevDate = new Date(previous + "T12:00:00Z");
+    const stepMs = Math.max(7 * 24 * 60 * 60 * 1000, lastDate.getTime() - prevDate.getTime());
+    const nextDate = new Date(lastDate.getTime() + stepMs);
+    const nextISO = nextDate.toISOString().slice(0, 10);
+    const updatedDates = [...dates, nextISO].sort();
+    // Étend la date de fin si nécessaire.
+    const newDateFin = nextISO > project.dateFin ? nextISO : project.dateFin;
+    const projectUpdate = newDateFin !== project.dateFin ? { dateFin: newDateFin } : {};
+    persist(
+      { ...project, ...projectUpdate, b2pDates: updatedDates, nbB2P: Math.max(0, updatedDates.length - 1) },
+      `B2P ajouté au ${formatDateFR(nextISO)}.`,
+      { action: "plan_updated", label: `B2P ajouté (retard projet)`, details: formatDateFR(nextISO) },
     );
   };
 
@@ -532,9 +562,15 @@ export default function ProjectPage() {
                     Modifiez les dates ou recalez sur la règle FGF
                   </p>
                 </div>
-                <Button size="xs" variant="secondary" iconLeft={<FiRefreshCw size={10} />} onClick={resetPlan}>
-                  Réinitialiser FGF
-                </Button>
+                <div className="flex items-center gap-2">
+                  {/* §4 (NT.26.008) — Bouton pour ajouter un B2P lorsque le projet prend du retard. */}
+                  <Button size="xs" iconLeft={<FiFilePlus size={10} />} onClick={addExtraB2P}>
+                    Ajouter un B2P
+                  </Button>
+                  <Button size="xs" variant="secondary" iconLeft={<FiRefreshCw size={10} />} onClick={resetPlan}>
+                    Réinitialiser FGF
+                  </Button>
+                </div>
               </div>
 
               <div className="mb-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5">
@@ -557,10 +593,12 @@ export default function ProjectPage() {
                         created ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-slate-50/80"
                       }`}
                     >
+                      {/* §4 (NT.26.008) — Pas de borne max : un B2P peut être décalé
+                          au-delà de la date de fin actuelle (retard projet ; la date de
+                          fin est étendue automatiquement par handlePlanDateChange). */}
                       <FrenchDateInput
                         value={date}
                         min={project.dateDebut}
-                        max={project.dateFin}
                         label={i === 0 ? "B2P0 — lancement" : `B2P${i} — déclenchement`}
                         onChange={(next) => handlePlanDateChange(i, next)}
                       />
@@ -623,7 +661,11 @@ export default function ProjectPage() {
                   <div className="section-label text-right">Budget Initial</div>
                 </div>
                 <div className="divide-y divide-slate-50">
-                  {project.lots.map((lot) => (
+                  {/* §1 (NT.26.008) — La LB PTO doit toujours être affichée en dernier. */}
+                  {project.lots
+                    .slice()
+                    .sort((a, b) => Number(isPTOLot(a)) - Number(isPTOLot(b)))
+                    .map((lot) => (
                     <div
                       key={lot.id}
                       className="grid grid-cols-[80px_1fr_150px] gap-3 px-4 py-2.5 text-[12px] transition-colors hover:bg-slate-50/60"

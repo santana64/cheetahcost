@@ -109,21 +109,32 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
     // §2.2 — BI projet (somme des BI des lots) : reste constant sur tous les bilans.
     const totalBI = (projet.lots ?? []).reduce((sum, lot) => sum + Number(lot.budgetInitial ?? 0), 0);
 
-    const activeIndex = Math.max(
-      0,
-      activeBilanId ? points.findIndex((point) => point.id === activeBilanId) : points.length - 1,
-    );
+    const rawActiveIndex = activeBilanId
+      ? points.findIndex((point) => point.id === activeBilanId)
+      : points.length - 1;
+    const activeIndex = rawActiveIndex >= 0 ? rawActiveIndex : points.length - 1;
+
+    // §3 (NT.26.008) — Historisation des graphiques :
+    // Le graphique « associé à un B2P » ne montre que l'historique jusqu'à ce B2P.
+    // Quand on consulte le B2P n°i, on voit les courbes de B2P0 à B2Pi (pas les
+    // déclenchements futurs non encore saisis).
+    const visiblePoints = points.slice(0, activeIndex + 1);
 
     // §2.2 — Axe des ordonnées : 10 % au-dessus du plus grand entre BI et toutes valeurs
-    // (BàD, Dépenses, VA, CP) de tous les bilans.
+    // (BàD, Dépenses, VA, CP) des points visibles.
     const rawMax = Math.max(
       1,
       totalBI,
-      ...points.flatMap((point) => [point.bad, point.depenses, point.va, point.cp]),
+      ...visiblePoints.flatMap((point) => [point.bad, point.depenses, point.va, point.cp]),
     );
     const maxY = rawMax * 1.1;
 
-    return { points, activeIndex: activeIndex >= 0 ? activeIndex : points.length - 1, maxY, totalBI };
+    return {
+      points: visiblePoints,
+      activeIndex: visiblePoints.length - 1,
+      maxY,
+      totalBI,
+    };
   }, [activeBilanId, projet]);
 
   if (!data.points.length) {
@@ -212,19 +223,19 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           );
         })}
 
-        {/* §2.2 (NT.26.007) — Ligne de référence BI : horizontale, à gauche libellée « BI »
-            avec la valeur du BI. Reste inchangée sur tous les tableaux (BI projet constant). */}
+        {/* §2.2 (NT.26.007) — Annotation « BI <valeur> » sur l'axe vertical.
+            §2 (NT.26.008) — BàD en trait continu : on supprime la ligne pointillée
+            horizontale qui pouvait être confondue avec BàD. On garde uniquement
+            le libellé à gauche de l'axe + un petit tick. */}
         {data.totalBI > 0 && (
           <g>
             <line
-              x1={pad.l}
+              x1={pad.l - 5}
               y1={biY}
-              x2={W - pad.r}
+              x2={pad.l}
               y2={biY}
               stroke="#1F4E79"
               strokeWidth="1.5"
-              strokeDasharray="6 4"
-              opacity={0.7}
             />
             <text
               x={pad.l - 10}

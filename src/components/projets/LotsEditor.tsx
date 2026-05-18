@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { Button } from "@/components/ui/Button";
+import { isPTOLot } from "@/lib/fgf";
 import type { LotTache } from "@/types/projet";
 
 type LotsEditorProps = {
@@ -34,7 +35,11 @@ function nextLBCode(lots: LotTache[]) {
 }
 
 export function LotsEditor({ open, lots, monnaie, onClose, onUpdated }: LotsEditorProps) {
-  const safeLots = useMemo(() => (Array.isArray(lots) ? lots : []), [lots]);
+  const safeLots = useMemo(() => {
+    const arr = Array.isArray(lots) ? lots : [];
+    // §1 (NT.26.008) — PTO toujours en dernier à l'affichage (édition de structure).
+    return arr.slice().sort((a, b) => Number(isPTOLot(a)) - Number(isPTOLot(b)));
+  }, [lots]);
   const [draft, setDraft] = useState<LotTache[]>(safeLots);
   const unit = (monnaie && monnaie.trim()) || "EUR";
 
@@ -95,7 +100,13 @@ export function LotsEditor({ open, lots, monnaie, onClose, onUpdated }: LotsEdit
       libelle: (lot.libelle || `Ligne budgétaire ${index + 1}`).trim(),
       budgetInitial: Number(lot.budgetInitial) || 0,
     }));
-    onUpdated(cleaned);
+    // §1 (NT.26.008) — La LB PTO doit toujours être positionnée EN DERNIER
+    // après une édition de la structure budgétaire (sinon elle remonte en tête
+    // si l'utilisateur l'a déplacée par erreur ou à la création initiale).
+    const sorted = cleaned
+      .slice()
+      .sort((a, b) => Number(isPTOLot(a)) - Number(isPTOLot(b)));
+    onUpdated(sorted);
   };
 
   return createPortal(
