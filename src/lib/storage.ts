@@ -137,6 +137,15 @@ function normalizeProject(raw: unknown): Projet {
       ? String(source.uniteCoutLibelle ?? "jour/personne").trim() || "jour/personne"
       : monnaie;
 
+  // §6 (NT.26.008) — La précision décimale des montants doit être propagée
+  // au composant B2PTable. La normalisation précédente la supprimait, ce qui
+  // forçait tous les calculs à precision=0 et arrondissait les valeurs comme
+  // 250,5 → « 251 » sur la ligne « Projet ». Bornée à [0, 4].
+  const rawPrecision = Number(source.precision);
+  const precision = Number.isFinite(rawPrecision)
+    ? Math.max(0, Math.min(4, Math.round(rawPrecision)))
+    : 0;
+
   const draft: Projet = {
     id: String(source.id || `project_${Date.now()}`),
     nom: String(source.nom ?? "Projet sans nom").trim() || "Projet sans nom",
@@ -152,6 +161,7 @@ function normalizeProject(raw: unknown): Projet {
     tvaMode: source.tvaMode === "TTC" ? "TTC" : "HT",
     valeurMode: source.valeurMode === "constante" ? "constante" : "courante",
     valeurReference: typeof source.valeurReference === "string" ? source.valeurReference : "",
+    precision,
 
     lots,
     bilans: normalizeBilans(source.bilans, lots, dateDebut),
