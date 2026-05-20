@@ -134,6 +134,8 @@ function gapAreaPath(
 
 /* ────────────────────────────────────────────────────────────────────────────
    Flèche directionnelle Vc / E (couleurs inchangées)
+   Refonte : trait épais, double tête optionnelle, ET pilule colorée pour le
+   label de manière à ce que Vc et É ressortent franchement sur le graphique.
    ──────────────────────────────────────────────────────────────────────────── */
 function Arrow({
   x,
@@ -150,26 +152,64 @@ function Arrow({
   label: string;
   labelPosition?: "left" | "right";
 }) {
+  const top = Math.min(yFrom, yTo);
+  const bot = Math.max(yFrom, yTo);
   const goingDown = yTo > yFrom;
-  const head = goingDown
-    ? `M ${x - 5} ${yTo - 7} L ${x} ${yTo} L ${x + 5} ${yTo - 7}`
-    : `M ${x - 5} ${yTo + 7} L ${x} ${yTo} L ${x + 5} ${yTo + 7}`;
+  // Tête à l'extrémité d'arrivée + petite tête « caudale » à l'origine pour
+  // matérialiser visuellement le point de départ.
+  const headEnd = goingDown
+    ? `M ${x - 7} ${yTo - 9} L ${x} ${yTo} L ${x + 7} ${yTo - 9}`
+    : `M ${x - 7} ${yTo + 9} L ${x} ${yTo} L ${x + 7} ${yTo + 9}`;
+  const tail = goingDown
+    ? `M ${x - 4} ${yFrom + 5} L ${x + 4} ${yFrom + 5}`
+    : `M ${x - 4} ${yFrom - 5} L ${x + 4} ${yFrom - 5}`;
   const mid = (yFrom + yTo) / 2;
-  const labelX = labelPosition === "right" ? x + 9 : x - 9;
-  const anchor = labelPosition === "right" ? "start" : "end";
+
+  // Pilule colorée pour le label.
+  // Dimensions estimées d'après la longueur du texte. Centre approximatif.
+  const labelW = Math.max(58, 14 + label.length * 6.2);
+  const labelH = 19;
+  const labelGap = 10; // distance horizontale entre la flèche et la pilule
+  const labelX = labelPosition === "right" ? x + labelGap : x - labelGap - labelW;
+  const labelY = mid - labelH / 2;
+  const labelTextX = labelX + labelW / 2;
+  const labelTextY = mid + 4;
+
+  // Trait de rattachement entre la flèche et la pilule (petit guide)
+  const connectorX1 = labelPosition === "right" ? x : x;
+  const connectorX2 = labelPosition === "right" ? labelX : labelX + labelW;
 
   return (
     <g>
-      <line x1={x} y1={yFrom} x2={x} y2={yTo} stroke={color} strokeWidth="2.5" />
-      <path d={head} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-      <text
+      {/* Halo blanc sous le trait pour le faire ressortir des courbes */}
+      <line x1={x} y1={top} x2={x} y2={bot} stroke="#FBFAF7" strokeWidth="6" strokeLinecap="round" />
+      {/* Trait principal épais */}
+      <line x1={x} y1={yFrom} x2={x} y2={yTo} stroke={color} strokeWidth="3.5" strokeLinecap="round" />
+      {/* Tête de départ (petit trait perpendiculaire) */}
+      <path d={tail} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" />
+      {/* Tête d'arrivée */}
+      <path d={headEnd} fill="none" stroke={color} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+      {/* Petit guide entre flèche et pilule */}
+      <line x1={connectorX1} y1={mid} x2={connectorX2} y2={mid} stroke={color} strokeWidth="1.5" opacity="0.6" />
+      {/* Pilule colorée du label */}
+      <rect
         x={labelX}
-        y={mid + 3}
-        fontSize="11"
-        fontWeight="700"
+        y={labelY}
+        width={labelW}
+        height={labelH}
+        rx={labelH / 2}
         fill={color}
-        textAnchor={anchor}
-        style={{ paintOrder: "stroke", stroke: "#FBFAF7", strokeWidth: 3, strokeLinejoin: "round" }}
+        stroke={color}
+        strokeWidth="1"
+      />
+      <text
+        x={labelTextX}
+        y={labelTextY}
+        fontSize="11.5"
+        fontWeight="700"
+        fill="#FFFFFF"
+        textAnchor="middle"
+        style={{ fontVariantNumeric: "tabular-nums" }}
       >
         {label}
       </text>
@@ -240,7 +280,9 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
 
   const W = 980;
   const H = 560;
-  const pad = { l: 88, r: 100, t: 60, b: 120 };
+  // Padding droit plus généreux pour héberger les end labels SANS chevaucher
+  // les pilules des flèches Vc/E.
+  const pad = { l: 88, r: 130, t: 60, b: 120 };
   const iw = W - pad.l - pad.r;
   const ih = H - pad.t - pad.b;
 
@@ -253,13 +295,20 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
   const active = data.points[data.activeIndex] ?? data.points[data.points.length - 1];
   const showActiveArrows = !active.isBaseline;
   const activeX = x(data.activeIndex);
-  const varianceX = Math.min(W - pad.r - 30, activeX + 24);
-  const ecartX = Math.min(W - pad.r - 6, activeX + 70);
 
   // Last point for end labels
   const lastIndex = data.points.length - 1;
   const lastPoint = data.points[lastIndex];
   const lastX = x(lastIndex);
+
+  // §2.3 — Flèches Vc et É placées exactement sur la verticale du B2P actif.
+  // Les pilules de label se positionnent à GAUCHE quand le point actif est
+  // le dernier (sinon elles écraseraient les end labels), à DROITE sinon.
+  const arrowLabelSide: "left" | "right" = data.activeIndex === lastIndex ? "left" : "right";
+  // On décale légèrement les deux flèches horizontalement pour éviter qu'elles
+  // se superposent visuellement (Vc en bas, É en haut, mais sur la même colonne).
+  const varianceX = activeX - 5;
+  const ecartX = activeX + 5;
 
   // 4 ticks pour l'axe Y : 0, 1/3, 2/3, max
   const ticks = [
@@ -444,11 +493,28 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           );
         })}
 
-        {/* Flèches Vc / E — couleurs et directions inchangées (§2.3 NT.26.006) */}
+        {/* Flèches Vc / E — couleurs et directions inchangées (§2.3 NT.26.006).
+            Refonte (NT.26.008) : placées sur la verticale du B2P actif, avec
+            pilules colorées des labels, halo blanc pour ressortir des courbes,
+            et bascule du label à gauche si le point actif est en bord droit. */}
         {showActiveArrows && (
           <>
-            <Arrow x={varianceX} yFrom={y(active.va)} yTo={y(active.depenses)} color={COLORS.vc} label={`Vc ${fmtSigned(active.variance)}`} labelPosition="right" />
-            <Arrow x={ecartX} yFrom={y(active.bad)} yTo={y(active.cp)} color={COLORS.e} label={`E ${fmtSigned(active.ecart)}`} labelPosition="right" />
+            <Arrow
+              x={varianceX}
+              yFrom={y(active.va)}
+              yTo={y(active.depenses)}
+              color={COLORS.vc}
+              label={`Vc ${fmtSigned(active.variance)}`}
+              labelPosition={arrowLabelSide}
+            />
+            <Arrow
+              x={ecartX}
+              yFrom={y(active.bad)}
+              yTo={y(active.cp)}
+              color={COLORS.e}
+              label={`E ${fmtSigned(active.ecart)}`}
+              labelPosition={arrowLabelSide}
+            />
           </>
         )}
 
