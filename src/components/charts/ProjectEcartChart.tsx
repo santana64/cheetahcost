@@ -9,21 +9,17 @@ import { getCostUnitLabel } from "@/lib/projectLabels";
 import type { Projet } from "@/types/projet";
 
 /* ───────────────────────────────────────────────────────────────────────────
-   Refonte (NT.26.008 — UI polish)
-   - Indicateurs et couleurs INCHANGÉS :
-       BàD  → #111827  (noir)
-       Dép. → #BE123C  (rouge)
-       VA   → #3730A3  (bleu/violet)
-       CP   → #047857  (vert sombre)
-       Vc   → #BE123C  (flèche rouge)
-       E    → #0A8F3D  (flèche verte)
-   - Améliorations visuelles :
-       1. Courbes lissées (Catmull-Rom → cubic Bezier)
-       2. Zone d'écart ombrée entre BàD et CP (rouge si dépassement, vert sinon)
-       3. Tooltip au survol des points
-       4. End labels (chiffres collés au dernier point de chaque série)
-       5. B2P actif mis en valeur, autres légèrement atténués
-       6. Grid plus douce, ombres subtiles, typographie aérée
+   Refonte v3 (NT.26.008 — UX feedback : « les flèches étaient horribles »)
+   ─────────────────────────────────────────────────────────────────────────────
+   - Indicateurs et couleurs INCHANGÉS.
+   - Les pilules Vc/É qui se chevauchaient avec les end labels sont SUPPRIMÉES.
+   - À leur place : un PANNEAU LATÉRAL à droite, séparé du graphique, qui
+     contient deux grandes cards « Vc » et « É » avec leur valeur, et une mini
+     synthèse BàD / CP / Dép / VA en dessous.
+   - Sur le chart, les flèches directionnelles deviennent discrètes (trait fin
+     et arrowhead) entre VA→Dép. et BàD→CP, sans label. Elles matérialisent
+     visuellement le gap sans alourdir la lecture.
+   - End labels supprimés du chart : les valeurs sont désormais dans le panneau.
    ─────────────────────────────────────────────────────────────────────────── */
 
 const COLORS = {
@@ -41,8 +37,10 @@ const COLORS = {
   textMuted: "#6B7280",
   cardBg: "#FBFAF7",
   outerBg: "#F5F1E8",
-  gapDeficit: "rgba(190,18,60,0.10)", // rouge transparent = dépassement
-  gapSurplus: "rgba(4,120,87,0.10)",  // vert transparent = économie
+  panelBg: "#FFFFFF",
+  panelBorder: "rgba(15,23,42,0.10)",
+  gapDeficit: "rgba(190,18,60,0.10)",
+  gapSurplus: "rgba(4,120,87,0.10)",
 };
 
 type Props = {
@@ -80,7 +78,6 @@ function fmtSigned(value: number): string {
 
 /* ────────────────────────────────────────────────────────────────────────────
    Lissage Catmull-Rom → cubic Bezier
-   Pour 1 point : renvoie juste un M. Pour 2 points : un trait. ≥ 3 : courbes.
    ──────────────────────────────────────────────────────────────────────────── */
 function smoothPath(
   points: Point[],
@@ -93,7 +90,6 @@ function smoothPath(
   const pts = points.map((p, i) => [x(i), y(p[key])] as const);
   if (pts.length === 1) return `M ${pts[0][0]} ${pts[0][1]}`;
   if (pts.length === 2) return `M ${pts[0][0]} ${pts[0][1]} L ${pts[1][0]} ${pts[1][1]}`;
-
   let d = `M ${pts[0][0].toFixed(2)} ${pts[0][1].toFixed(2)}`;
   for (let i = 0; i < pts.length - 1; i++) {
     const p0 = pts[i - 1] ?? pts[i];
@@ -109,8 +105,6 @@ function smoothPath(
   return d;
 }
 
-/** Construit le polygone fermé entre la courbe « top » et la courbe « bottom »
- * (utilisé pour la zone d'écart entre BàD et CP). */
 function gapAreaPath(
   points: Point[],
   topKey: "bad" | "cp",
@@ -123,96 +117,35 @@ function gapAreaPath(
   const bottomPts = points.map((p, i) => [x(i), y(p[bottomKey])] as const).reverse();
   const start = topPts[0];
   let d = `M ${start[0]} ${start[1]}`;
-  for (let i = 1; i < topPts.length; i++) {
-    d += ` L ${topPts[i][0]} ${topPts[i][1]}`;
-  }
-  for (const p of bottomPts) {
-    d += ` L ${p[0]} ${p[1]}`;
-  }
+  for (let i = 1; i < topPts.length; i++) d += ` L ${topPts[i][0]} ${topPts[i][1]}`;
+  for (const p of bottomPts) d += ` L ${p[0]} ${p[1]}`;
   return `${d} Z`;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   Flèche directionnelle Vc / E (couleurs inchangées)
-   Refonte : trait épais, double tête optionnelle, ET pilule colorée pour le
-   label de manière à ce que Vc et É ressortent franchement sur le graphique.
+   Mini-flèche directionnelle sur le chart — pas de label, juste le trait et
+   les têtes pour montrer visuellement le gap entre 2 courbes.
    ──────────────────────────────────────────────────────────────────────────── */
-function Arrow({
+function MiniArrow({
   x,
   yFrom,
   yTo,
   color,
-  label,
-  labelPosition = "right",
 }: {
   x: number;
   yFrom: number;
   yTo: number;
   color: string;
-  label: string;
-  labelPosition?: "left" | "right";
 }) {
-  const top = Math.min(yFrom, yTo);
-  const bot = Math.max(yFrom, yTo);
+  if (Math.abs(yTo - yFrom) < 6) return null; // pas la peine si gap minuscule
   const goingDown = yTo > yFrom;
-  // Tête à l'extrémité d'arrivée + petite tête « caudale » à l'origine pour
-  // matérialiser visuellement le point de départ.
   const headEnd = goingDown
-    ? `M ${x - 7} ${yTo - 9} L ${x} ${yTo} L ${x + 7} ${yTo - 9}`
-    : `M ${x - 7} ${yTo + 9} L ${x} ${yTo} L ${x + 7} ${yTo + 9}`;
-  const tail = goingDown
-    ? `M ${x - 4} ${yFrom + 5} L ${x + 4} ${yFrom + 5}`
-    : `M ${x - 4} ${yFrom - 5} L ${x + 4} ${yFrom - 5}`;
-  const mid = (yFrom + yTo) / 2;
-
-  // Pilule colorée pour le label.
-  // Dimensions estimées d'après la longueur du texte. Centre approximatif.
-  const labelW = Math.max(58, 14 + label.length * 6.2);
-  const labelH = 19;
-  const labelGap = 10; // distance horizontale entre la flèche et la pilule
-  const labelX = labelPosition === "right" ? x + labelGap : x - labelGap - labelW;
-  const labelY = mid - labelH / 2;
-  const labelTextX = labelX + labelW / 2;
-  const labelTextY = mid + 4;
-
-  // Trait de rattachement entre la flèche et la pilule (petit guide)
-  const connectorX1 = labelPosition === "right" ? x : x;
-  const connectorX2 = labelPosition === "right" ? labelX : labelX + labelW;
-
+    ? `M ${x - 4} ${yTo - 6} L ${x} ${yTo} L ${x + 4} ${yTo - 6}`
+    : `M ${x - 4} ${yTo + 6} L ${x} ${yTo} L ${x + 4} ${yTo + 6}`;
   return (
     <g>
-      {/* Halo blanc sous le trait pour le faire ressortir des courbes */}
-      <line x1={x} y1={top} x2={x} y2={bot} stroke="#FBFAF7" strokeWidth="6" strokeLinecap="round" />
-      {/* Trait principal épais */}
-      <line x1={x} y1={yFrom} x2={x} y2={yTo} stroke={color} strokeWidth="3.5" strokeLinecap="round" />
-      {/* Tête de départ (petit trait perpendiculaire) */}
-      <path d={tail} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" />
-      {/* Tête d'arrivée */}
-      <path d={headEnd} fill="none" stroke={color} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
-      {/* Petit guide entre flèche et pilule */}
-      <line x1={connectorX1} y1={mid} x2={connectorX2} y2={mid} stroke={color} strokeWidth="1.5" opacity="0.6" />
-      {/* Pilule colorée du label */}
-      <rect
-        x={labelX}
-        y={labelY}
-        width={labelW}
-        height={labelH}
-        rx={labelH / 2}
-        fill={color}
-        stroke={color}
-        strokeWidth="1"
-      />
-      <text
-        x={labelTextX}
-        y={labelTextY}
-        fontSize="11.5"
-        fontWeight="700"
-        fill="#FFFFFF"
-        textAnchor="middle"
-        style={{ fontVariantNumeric: "tabular-nums" }}
-      >
-        {label}
-      </text>
+      <line x1={x} y1={yFrom} x2={x} y2={yTo} stroke={color} strokeWidth="2.2" strokeLinecap="round" opacity="0.85" />
+      <path d={headEnd} fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
     </g>
   );
 }
@@ -249,8 +182,6 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
 
     const rawActiveIndex = activeBilanId ? points.findIndex((p) => p.id === activeBilanId) : points.length - 1;
     const activeIndex = rawActiveIndex >= 0 ? rawActiveIndex : points.length - 1;
-
-    // §3 (NT.26.008) — Historisation : on tronque jusqu'au B2P actif
     const visiblePoints = points.slice(0, activeIndex + 1);
 
     const rawMax = Math.max(
@@ -278,13 +209,21 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
     );
   }
 
+  /* ──────────────────────────────────────────────────────────────────────────
+     Layout : SVG global divisé en 2 zones
+     - Zone graphique : pad.l → chartRight
+     - Zone panneau   : panelLeft → W - 16
+     ────────────────────────────────────────────────────────────────────────── */
   const W = 980;
   const H = 560;
-  // Padding droit plus généreux pour héberger les end labels SANS chevaucher
-  // les pilules des flèches Vc/E.
-  const pad = { l: 88, r: 130, t: 60, b: 120 };
+  const panelW = 200;
+  const panelGap = 16;
+  const pad = { l: 84, r: panelW + panelGap, t: 60, b: 110 };
   const iw = W - pad.l - pad.r;
   const ih = H - pad.t - pad.b;
+
+  const chartRight = W - pad.r;
+  const panelLeft = chartRight + panelGap;
 
   const x = (index: number) => {
     const denominator = Math.max(1, data.points.length - 1);
@@ -296,71 +235,61 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
   const showActiveArrows = !active.isBaseline;
   const activeX = x(data.activeIndex);
 
-  // Last point for end labels
-  const lastIndex = data.points.length - 1;
-  const lastPoint = data.points[lastIndex];
-  const lastX = x(lastIndex);
-
-  // §2.3 — Flèches Vc et É placées exactement sur la verticale du B2P actif.
-  // Les pilules de label se positionnent à GAUCHE quand le point actif est
-  // le dernier (sinon elles écraseraient les end labels), à DROITE sinon.
-  const arrowLabelSide: "left" | "right" = data.activeIndex === lastIndex ? "left" : "right";
-  // On décale légèrement les deux flèches horizontalement pour éviter qu'elles
-  // se superposent visuellement (Vc en bas, É en haut, mais sur la même colonne).
-  const varianceX = activeX - 5;
-  const ecartX = activeX + 5;
-
-  // 4 ticks pour l'axe Y : 0, 1/3, 2/3, max
+  // 4 ticks pour l'axe Y
   const ticks = [
     { value: 0, label: "0" },
     { value: data.maxY * 0.33, label: fmtInt(data.maxY * 0.33) },
     { value: data.maxY * 0.66, label: fmtInt(data.maxY * 0.66) },
     { value: data.maxY, label: fmtInt(data.maxY) },
   ];
-
   const biY = y(data.totalBI);
 
-  // Tooltip : index survolé (priorité) sinon actif
+  // Tooltip
   const focusIndex = hoverIndex !== null ? hoverIndex : data.activeIndex;
   const focusPoint = data.points[focusIndex];
 
-  // Zone d'écart : rouge si CP > BàD au moins une fois, sinon vert
+  // Zone d'écart (rouge si déficit global, vert si économie globale)
   const hasDeficit = data.points.some((p) => p.cp > p.bad);
   const gapFill = hasDeficit ? COLORS.gapDeficit : COLORS.gapSurplus;
   const gapAreaTop = hasDeficit ? "cp" : "bad";
   const gapAreaBottom = hasDeficit ? "bad" : "cp";
 
-  // Legend items — couleurs inchangées
+  // Légende
   const legendItems = [
-    { kind: "line" as const, color: COLORS.bad, label: "BàD" },
-    { kind: "line" as const, color: COLORS.depenses, label: "Dépenses" },
-    { kind: "line" as const, color: COLORS.va, label: "Valeur acquise" },
-    { kind: "line" as const, color: COLORS.cp, label: "CP" },
-    { kind: "arrow" as const, color: COLORS.vc, label: "Vc (Variance coût)" },
-    { kind: "arrow" as const, color: COLORS.e, label: "E (Écart)" },
+    { color: COLORS.bad, label: "BàD" },
+    { color: COLORS.depenses, label: "Dépenses" },
+    { color: COLORS.va, label: "Valeur acquise" },
+    { color: COLORS.cp, label: "CP" },
   ];
-  const itemWidths = [76, 110, 140, 64, 168, 130];
+  const itemWidths = [78, 110, 140, 64];
   const totalLegendWidth = itemWidths.reduce((a, b) => a + b, 0);
   const legendStartX = pad.l + Math.max(0, (iw - totalLegendWidth) / 2);
   let legendCursor = legendStartX;
-  const legendY = H - 38;
+  const legendY = H - 30;
 
-  // End labels : pour éviter chevauchement, on les répartit verticalement
-  const endLabels = [
-    { key: "bad" as const, color: COLORS.bad, label: "BàD", value: lastPoint.bad },
-    { key: "cp" as const, color: COLORS.cp, label: "CP", value: lastPoint.cp },
-    { key: "depenses" as const, color: COLORS.depenses, label: "Dép.", value: lastPoint.depenses },
-    { key: "va" as const, color: COLORS.va, label: "VA", value: lastPoint.va },
-  ]
-    .map((s) => ({ ...s, yRaw: y(s.value) }))
-    .sort((a, b) => a.yRaw - b.yRaw);
-  // Ajustement vertical pour éviter chevauchements (min 18px d'écart)
-  for (let i = 1; i < endLabels.length; i++) {
-    const prev = endLabels[i - 1];
-    if (endLabels[i].yRaw - prev.yRaw < 18) {
-      endLabels[i].yRaw = prev.yRaw + 18;
-    }
-  }
+  /* ──────────────────────────────────────────────────────────────────────────
+     Panneau latéral droit — cards Vc et É
+     ────────────────────────────────────────────────────────────────────────── */
+  const cardLeft = panelLeft;
+  const cardWidth = panelW - 8;
+  const cardHeight = 78;
+  const cardSpacing = 12;
+  const ecartCardY = pad.t;
+  const vcCardY = ecartCardY + cardHeight + cardSpacing;
+  const summaryCardY = vcCardY + cardHeight + cardSpacing;
+
+  const ecartColor = active.ecart > 0 ? COLORS.depenses : COLORS.cp;
+  const vcColor = active.variance > 0 ? COLORS.depenses : COLORS.cp;
+  const ecartLabel = active.ecart > 0 ? "Dépassement" : active.ecart < 0 ? "Économie" : "À l'équilibre";
+  const vcLabel = active.variance > 0 ? "Sur-coût" : active.variance < 0 ? "Productivité +" : "À l'équilibre";
+
+  // 4 lignes synthèse : BàD, CP, Dép., VA
+  const summary = [
+    { label: "BàD", value: active.bad, color: COLORS.bad },
+    { label: "CP", value: active.cp, color: COLORS.cp },
+    { label: "Dép.", value: active.depenses, color: COLORS.depenses },
+    { label: "VA", value: active.va, color: COLORS.va },
+  ];
 
   return (
     <div className="relative h-full w-full rounded-2xl border border-black/10 p-3" style={{ background: COLORS.outerBg }}>
@@ -368,6 +297,9 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
         <defs>
           <filter id="curveShadow" x="-20%" y="-20%" width="140%" height="140%">
             <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" floodOpacity="0.20" />
+          </filter>
+          <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.10" />
           </filter>
           <filter id="dotShadow" x="-50%" y="-50%" width="200%" height="200%">
             <feDropShadow dx="0" dy="1" stdDeviation="1" floodOpacity="0.3" />
@@ -392,7 +324,7 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
               <line
                 x1={pad.l}
                 y1={yy}
-                x2={W - pad.r}
+                x2={chartRight}
                 y2={yy}
                 stroke={COLORS.grid}
                 strokeDasharray={tick.value === 0 ? "0" : "3 3"}
@@ -411,7 +343,7 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           );
         })}
 
-        {/* Annotation BI sur l'axe Y (libellé seul + tick — pas de ligne traversante per CSC NT.26.008) */}
+        {/* Annotation BI sur l'axe Y */}
         {data.totalBI > 0 && (
           <g>
             <line x1={pad.l - 6} y1={biY} x2={pad.l} y2={biY} stroke={COLORS.bi} strokeWidth="2" />
@@ -431,14 +363,14 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
 
         {/* Axes */}
         <line x1={pad.l} y1={pad.t} x2={pad.l} y2={H - pad.b} stroke={COLORS.axis} strokeWidth="1.2" />
-        <line x1={pad.l} y1={H - pad.b} x2={W - pad.r} y2={H - pad.b} stroke={COLORS.axis} strokeWidth="1.2" />
+        <line x1={pad.l} y1={H - pad.b} x2={chartRight} y2={H - pad.b} stroke={COLORS.axis} strokeWidth="1.2" />
 
-        {/* Zone d'écart (BàD ↔ CP) — couleur dépendant du signe global */}
+        {/* Zone d'écart ombrée */}
         {data.points.length >= 2 && (
           <path d={gapAreaPath(data.points, gapAreaTop, gapAreaBottom, x, y)} fill={gapFill} stroke="none" />
         )}
 
-        {/* Labels X (B2P + date) */}
+        {/* Labels X */}
         {data.points.map((point, index) => (
           <g key={point.id}>
             <line x1={x(index)} y1={H - pad.b} x2={x(index)} y2={H - pad.b + 4} stroke={COLORS.axis} />
@@ -458,7 +390,7 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           </g>
         ))}
 
-        {/* Vertical highlight du B2P actif/survolé — derrière les courbes */}
+        {/* Vertical highlight du focus */}
         {focusPoint && (
           <line
             x1={x(focusIndex)}
@@ -477,7 +409,7 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
         <path d={smoothPath(data.points, "va", x, y)} fill="none" stroke={COLORS.va} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#curveShadow)" />
         <path d={smoothPath(data.points, "cp", x, y)} fill="none" stroke={COLORS.cp} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#curveShadow)" />
 
-        {/* Marqueurs sur chaque B2P */}
+        {/* Marqueurs */}
         {data.points.map((point, index) => {
           const cx = x(index);
           const isFocused = index === focusIndex;
@@ -493,64 +425,18 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           );
         })}
 
-        {/* Flèches Vc / E — couleurs et directions inchangées (§2.3 NT.26.006).
-            Refonte (NT.26.008) : placées sur la verticale du B2P actif, avec
-            pilules colorées des labels, halo blanc pour ressortir des courbes,
-            et bascule du label à gauche si le point actif est en bord droit. */}
+        {/* Mini-flèches Vc / É — discrètes, sans label (les valeurs sont dans le panneau) */}
         {showActiveArrows && (
           <>
-            <Arrow
-              x={varianceX}
-              yFrom={y(active.va)}
-              yTo={y(active.depenses)}
-              color={COLORS.vc}
-              label={`Vc ${fmtSigned(active.variance)}`}
-              labelPosition={arrowLabelSide}
-            />
-            <Arrow
-              x={ecartX}
-              yFrom={y(active.bad)}
-              yTo={y(active.cp)}
-              color={COLORS.e}
-              label={`E ${fmtSigned(active.ecart)}`}
-              labelPosition={arrowLabelSide}
-            />
+            <MiniArrow x={activeX - 6} yFrom={y(active.va)} yTo={y(active.depenses)} color={COLORS.vc} />
+            <MiniArrow x={activeX + 6} yFrom={y(active.bad)} yTo={y(active.cp)} color={COLORS.e} />
           </>
         )}
 
-        {/* End labels — chiffres collés à l'extrémité de chaque courbe */}
-        {endLabels.map((s) => (
-          <g key={s.key}>
-            <line x1={lastX} y1={y(s.value)} x2={lastX + 8} y2={s.yRaw} stroke={s.color} strokeWidth="1" opacity="0.5" />
-            <rect
-              x={lastX + 10}
-              y={s.yRaw - 8}
-              width="58"
-              height="16"
-              rx="3"
-              fill={COLORS.cardBg}
-              stroke={s.color}
-              strokeWidth="1.2"
-            />
-            <text
-              x={lastX + 14}
-              y={s.yRaw + 3.5}
-              fontSize="10"
-              fontWeight="700"
-              fill={s.color}
-              style={{ fontVariantNumeric: "tabular-nums" }}
-            >
-              {s.label} {fmtInt(s.value)}
-            </text>
-          </g>
-        ))}
-
-        {/* Zones de capture pour le hover (transparentes, larges) */}
+        {/* Hit-areas pour le hover */}
         {data.points.map((point, index) => {
           const cx = x(index);
-          const half = data.points.length > 1
-            ? iw / (data.points.length - 1) / 2
-            : iw / 2;
+          const half = data.points.length > 1 ? iw / (data.points.length - 1) / 2 : iw / 2;
           return (
             <rect
               key={`hit-${point.id}`}
@@ -566,19 +452,18 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           );
         })}
 
-        {/* Tooltip (au survol) */}
+        {/* Tooltip au survol */}
         {hoverIndex !== null && focusPoint && (() => {
           const cx = x(hoverIndex);
           const ttW = 168;
           const ttH = focusPoint.isBaseline ? 70 : 100;
-          // Position : à droite du point, sauf si trop proche du bord droit → à gauche
-          const goLeft = cx + ttW + 16 > W - 8;
+          const goLeft = cx + ttW + 16 > chartRight;
           const ttX = goLeft ? cx - ttW - 12 : cx + 12;
           const ttY = Math.max(pad.t + 4, Math.min(H - pad.b - ttH - 4, y(focusPoint.bad) - ttH / 2));
           const lines = focusPoint.isBaseline
             ? [
                 { label: "BàD", value: focusPoint.bad, color: COLORS.bad },
-                { label: "CP", value: focusPoint.cp, color: COLORS.cp, hint: "= BàD au B2P0" },
+                { label: "CP", value: focusPoint.cp, color: COLORS.cp },
               ]
             : [
                 { label: "BàD", value: focusPoint.bad, color: COLORS.bad },
@@ -586,33 +471,19 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
                 { label: "VA", value: focusPoint.va, color: COLORS.va },
                 { label: "CP", value: focusPoint.cp, color: COLORS.cp },
                 { label: "Vc", value: focusPoint.variance, color: COLORS.vc, signed: true },
-                { label: "E", value: focusPoint.ecart, color: COLORS.e, signed: true },
+                { label: "É", value: focusPoint.ecart, color: COLORS.e, signed: true },
               ];
           return (
             <g pointerEvents="none">
-              <rect
-                x={ttX}
-                y={ttY}
-                width={ttW}
-                height={ttH}
-                rx="6"
-                fill="#FFFFFF"
-                stroke="rgba(15,23,42,0.18)"
-                strokeWidth="1"
-                filter="url(#dotShadow)"
-              />
-              <text x={ttX + 10} y={ttY + 16} fontSize="11" fontWeight="700" fill={COLORS.textPrimary}>
-                {focusPoint.label}
-              </text>
+              <rect x={ttX} y={ttY} width={ttW} height={ttH} rx="6" fill="#FFFFFF" stroke="rgba(15,23,42,0.18)" strokeWidth="1" filter="url(#dotShadow)" />
+              <text x={ttX + 10} y={ttY + 16} fontSize="11" fontWeight="700" fill={COLORS.textPrimary}>{focusPoint.label}</text>
               <text x={ttX + ttW - 10} y={ttY + 16} fontSize="9.5" fill={COLORS.textMuted} textAnchor="end">
                 {formatDateFR(focusPoint.date)}
               </text>
               {lines.map((line, i) => (
                 <g key={line.label} transform={`translate(${ttX + 10}, ${ttY + 30 + i * 12})`}>
                   <circle cx="3" cy="-3" r="3" fill={line.color} />
-                  <text x="12" y="0" fontSize="10" fill={COLORS.textSecondary}>
-                    {line.label}
-                  </text>
+                  <text x="12" y="0" fontSize="10" fill={COLORS.textSecondary}>{line.label}</text>
                   <text
                     x={ttW - 20}
                     y="0"
@@ -630,27 +501,116 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           );
         })()}
 
-        {/* Légende horizontale en bas */}
+        {/* Légende horizontale (courbes seulement, les flèches sont expliquées par le panneau) */}
         <g transform={`translate(0, ${legendY})`}>
           {legendItems.map((item, i) => {
             const cx = legendCursor;
             legendCursor += itemWidths[i];
             return (
               <g key={item.label} transform={`translate(${cx}, 0)`}>
-                {item.kind === "line" ? (
-                  <line x1="0" y1="0" x2="20" y2="0" stroke={item.color} strokeWidth="2.5" strokeLinecap="round" />
-                ) : (
-                  <path
-                    d="M 10 -7 L 10 7 M 6 3 L 10 7 L 14 3"
-                    fill="none"
-                    stroke={item.color}
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                )}
-                <text x="28" y="4" fontSize="10.5" fill={COLORS.textPrimary}>
-                  {item.label}
+                <line x1="0" y1="0" x2="20" y2="0" stroke={item.color} strokeWidth="2.5" strokeLinecap="round" />
+                <text x="28" y="4" fontSize="10.5" fill={COLORS.textPrimary}>{item.label}</text>
+              </g>
+            );
+          })}
+        </g>
+
+        {/* ────────────────────────────────────────────────────────────────────
+            PANNEAU LATÉRAL DROIT — Vc / É / Synthèse du B2P actif
+            ──────────────────────────────────────────────────────────────────── */}
+
+        {/* Titre du panneau */}
+        <text x={cardLeft} y={pad.t - 22} fontSize="11" fontWeight="700" fill={COLORS.textSecondary}>
+          {active.label}
+        </text>
+        <text x={cardLeft + cardWidth} y={pad.t - 22} fontSize="10" fill={COLORS.textMuted} textAnchor="end">
+          {formatDateFR(active.date)}
+        </text>
+
+        {/* Card Écart */}
+        <g filter="url(#cardShadow)">
+          <rect
+            x={cardLeft}
+            y={ecartCardY}
+            width={cardWidth}
+            height={cardHeight}
+            rx="10"
+            fill={COLORS.panelBg}
+            stroke={ecartColor}
+            strokeWidth="1.5"
+          />
+          {/* Bande verticale colorée à gauche */}
+          <rect x={cardLeft} y={ecartCardY} width="5" height={cardHeight} rx="2" fill={ecartColor} />
+          <text x={cardLeft + 16} y={ecartCardY + 22} fontSize="11" fontWeight="700" fill={COLORS.textMuted}>
+            É — ÉCART
+          </text>
+          <text
+            x={cardLeft + 16}
+            y={ecartCardY + 50}
+            fontSize="26"
+            fontWeight="800"
+            fill={ecartColor}
+            style={{ fontVariantNumeric: "tabular-nums" }}
+          >
+            {active.isBaseline ? "0" : fmtSigned(active.ecart)}
+          </text>
+          <text x={cardLeft + 16} y={ecartCardY + 68} fontSize="10" fill={COLORS.textMuted}>
+            {active.isBaseline ? "Référence initiale" : `${ecartLabel} · CP − BàD`}
+          </text>
+        </g>
+
+        {/* Card Vc */}
+        <g filter="url(#cardShadow)">
+          <rect
+            x={cardLeft}
+            y={vcCardY}
+            width={cardWidth}
+            height={cardHeight}
+            rx="10"
+            fill={COLORS.panelBg}
+            stroke={vcColor}
+            strokeWidth="1.5"
+          />
+          <rect x={cardLeft} y={vcCardY} width="5" height={cardHeight} rx="2" fill={vcColor} />
+          <text x={cardLeft + 16} y={vcCardY + 22} fontSize="11" fontWeight="700" fill={COLORS.textMuted}>
+            Vc — VARIANCE COÛT
+          </text>
+          <text
+            x={cardLeft + 16}
+            y={vcCardY + 50}
+            fontSize="26"
+            fontWeight="800"
+            fill={vcColor}
+            style={{ fontVariantNumeric: "tabular-nums" }}
+          >
+            {active.isBaseline ? "0" : fmtSigned(active.variance)}
+          </text>
+          <text x={cardLeft + 16} y={vcCardY + 68} fontSize="10" fill={COLORS.textMuted}>
+            {active.isBaseline ? "Référence initiale" : `${vcLabel} · Dép. − VA`}
+          </text>
+        </g>
+
+        {/* Mini-synthèse BàD / CP / Dép. / VA */}
+        <g>
+          <text x={cardLeft} y={summaryCardY - 6} fontSize="10" fontWeight="700" fill={COLORS.textMuted}>
+            SYNTHÈSE
+          </text>
+          {summary.map((row, i) => {
+            const ry = summaryCardY + i * 22;
+            return (
+              <g key={row.label} transform={`translate(${cardLeft}, ${ry})`}>
+                <circle cx="6" cy="10" r="3.5" fill={row.color} />
+                <text x="16" y="14" fontSize="11" fill={COLORS.textSecondary}>{row.label}</text>
+                <text
+                  x={cardWidth - 4}
+                  y="14"
+                  fontSize="12"
+                  fontWeight="700"
+                  fill={COLORS.textPrimary}
+                  textAnchor="end"
+                  style={{ fontVariantNumeric: "tabular-nums" }}
+                >
+                  {fmtInt(row.value)}
                 </text>
               </g>
             );
