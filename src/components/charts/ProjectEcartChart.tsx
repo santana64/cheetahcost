@@ -256,12 +256,12 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
     }
   }
 
-  // Légende
+  // Légende — chaque item reflète le motif de la courbe (plein / tirets / pointillés)
   const legendItems = [
-    { color: COLORS.bad, label: "BàD" },
-    { color: COLORS.depenses, label: "Dépenses" },
-    { color: COLORS.va, label: "Valeur acquise" },
-    { color: COLORS.cp, label: "CP" },
+    { color: COLORS.bad, label: "BàD", dash: "" },
+    { color: COLORS.depenses, label: "Dépenses", dash: "7 4" },
+    { color: COLORS.va, label: "Valeur acquise", dash: "1.5 4" },
+    { color: COLORS.cp, label: "CP", dash: "" },
   ];
   const itemWidths = [78, 110, 140, 64];
   const totalLegendWidth = itemWidths.reduce((a, b) => a + b, 0);
@@ -384,10 +384,15 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           />
         )}
 
-        {/* Courbes lissées (jusqu'au dernier B2P saisi seulement) */}
+        {/* Courbes lissées (jusqu'au dernier B2P saisi seulement).
+            Convention FGF (modèle PDF) :
+              - BàD : trait plein noir  → données déterministes (budget)
+              - CP  : trait plein vert  → données déterministes (prévision)
+              - Dépenses    : tirets rouges (- - -) → données mesurées (réalisé)
+              - VA          : pointillés bleus (....) → données mesurées (acquis) */}
         <path d={badPath} fill="none" stroke={COLORS.bad} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#curveShadow)" />
-        <path d={depPath} fill="none" stroke={COLORS.depenses} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#curveShadow)" />
-        <path d={vaPath} fill="none" stroke={COLORS.va} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#curveShadow)" />
+        <path d={depPath} fill="none" stroke={COLORS.depenses} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="7 4" filter="url(#curveShadow)" />
+        <path d={vaPath} fill="none" stroke={COLORS.va} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="1.5 4" filter="url(#curveShadow)" />
         <path d={cpPath} fill="none" stroke={COLORS.cp} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#curveShadow)" />
 
         {/* Marqueurs SEULEMENT sur les B2P saisis */}
@@ -502,15 +507,24 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           );
         })()}
 
-        {/* Légende horizontale */}
+        {/* Légende horizontale — motif de la courbe (plein / tirets / pointillés) */}
         <g transform={`translate(0, ${legendY})`}>
           {legendItems.map((item, i) => {
             const cx = legendCursor;
             legendCursor += itemWidths[i];
             return (
               <g key={item.label} transform={`translate(${cx}, 0)`}>
-                <line x1="0" y1="0" x2="20" y2="0" stroke={item.color} strokeWidth="2.5" strokeLinecap="round" />
-                <text x="28" y="4" fontSize="10.5" fill={COLORS.textPrimary}>{item.label}</text>
+                <line
+                  x1="0"
+                  y1="0"
+                  x2="22"
+                  y2="0"
+                  stroke={item.color}
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeDasharray={item.dash || undefined}
+                />
+                <text x="30" y="4" fontSize="10.5" fill={COLORS.textPrimary}>{item.label}</text>
               </g>
             );
           })}
