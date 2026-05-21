@@ -401,30 +401,39 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           />
         )}
 
-        {/* Courbes lissées (jusqu'au dernier B2P saisi seulement).
+        {/* Courbes lissées (du B2P0 jusqu'au B2P consulté).
             Convention FGF (modèle PDF) :
               - BàD : trait plein noir  → données déterministes (budget)
               - CP  : trait plein vert  → données déterministes (prévision)
               - Dépenses    : tirets rouges (- - -) → données mesurées (réalisé)
-              - VA          : pointillés bleus (....) → données mesurées (acquis) */}
-        <path d={badPath} fill="none" stroke={COLORS.bad} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#curveShadow)" />
+              - VA          : pointillés bleus (....) → données mesurées (acquis)
+            Ordre de dessin : on met BàD EN DERNIER (sur le dessus). Si BàD
+            et CP se superposent (variation = 0 au début), c'est la ligne
+            BàD qu'on voit, comme dans le modèle PDF où BàD = horizontale BI. */}
         <path d={depPath} fill="none" stroke={COLORS.depenses} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="7 4" filter="url(#curveShadow)" />
         <path d={vaPath} fill="none" stroke={COLORS.va} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="1.5 4" filter="url(#curveShadow)" />
         <path d={cpPath} fill="none" stroke={COLORS.cp} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#curveShadow)" />
+        <path d={badPath} fill="none" stroke={COLORS.bad} strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" filter="url(#curveShadow)" />
 
-        {/* Marqueurs SEULEMENT sur les B2P saisis */}
+        {/* Marqueurs : SEULEMENT sur les B2P saisis ET dans l'historique
+            (jusqu'au B2P consulté). Bornage à activeIndex pour respecter
+            l'historisation des courbes (sinon on voyait des points isolés
+            aux B2P futurs sans courbe qui les relie). */}
         {data.timeline.map((point, index) => {
           if (!point.saved) return null;
+          if (index > data.activeIndex) return null;
           const cx = x(index);
           const isFocused = index === focusIndex;
           const r = isFocused ? 4.5 : 3;
-          const op = isFocused || index === data.activeIndex ? 1 : 0.7;
+          const op = isFocused || index === data.activeIndex ? 1 : 0.85;
           return (
             <g key={`pts-${index}`} opacity={op}>
-              <circle cx={cx} cy={y(point.bad ?? 0)} r={r} fill={COLORS.bad} filter={isFocused ? "url(#dotShadow)" : undefined} />
-              <circle cx={cx} cy={y(point.depenses ?? 0)} r={r} fill={COLORS.depenses} filter={isFocused ? "url(#dotShadow)" : undefined} />
+              {/* Ordre : VA en bas, Dép, CP, BàD en haut pour que les dots
+                  superposés (par ex. CP = BàD au B2P0) montrent toujours BàD. */}
               <circle cx={cx} cy={y(point.va ?? 0)} r={r} fill={COLORS.va} filter={isFocused ? "url(#dotShadow)" : undefined} />
+              <circle cx={cx} cy={y(point.depenses ?? 0)} r={r} fill={COLORS.depenses} filter={isFocused ? "url(#dotShadow)" : undefined} />
               <circle cx={cx} cy={y(point.cp ?? 0)} r={r} fill={COLORS.cp} filter={isFocused ? "url(#dotShadow)" : undefined} />
+              <circle cx={cx} cy={y(point.bad ?? 0)} r={r} fill={COLORS.bad} stroke="#FFFFFF" strokeWidth="0.8" filter={isFocused ? "url(#dotShadow)" : undefined} />
             </g>
           );
         })}
