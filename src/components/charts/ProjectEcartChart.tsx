@@ -34,7 +34,7 @@ const COLORS = {
   textPrimary: "#111827",
   textSecondary: "#4B5563",
   textMuted: "#6B7280",
-  textFuture: "#9CA3AF",
+  textFuture: "#6B7280",
   cardBg: "#FBFAF7",
   outerBg: "#F5F1E8",
 };
@@ -152,8 +152,8 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
       };
     });
 
-    // Indices saved dans la timeline
-    const savedIndices = timeline
+    // Indices saved (TOUS les bilans saisis, indépendamment du B2P consulté)
+    const allSavedIndices = timeline
       .map((p, i) => (p.saved ? i : -1))
       .filter((i) => i >= 0);
 
@@ -161,13 +161,26 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
     let activeIndex = activeBilanId
       ? timeline.findIndex((p) => p.bilanId === activeBilanId)
       : -1;
-    if (activeIndex < 0) activeIndex = savedIndices.length > 0 ? savedIndices[savedIndices.length - 1] : 0;
+    if (activeIndex < 0) {
+      activeIndex = allSavedIndices.length > 0 ? allSavedIndices[allSavedIndices.length - 1] : 0;
+    }
 
-    // Échelle Y : max parmi tous les saisis + BI (le BI sert de plancher)
+    // §3 (NT.26.008) — Historisation des courbes : les courbes s'allongent de
+    // B2P en B2P au fur et à mesure que l'on consulte un B2P plus récent.
+    // Donc on borne les courbes à l'index du B2P consulté (et pas au dernier
+    // saisi globalement). L'AXE X reste lui inchangé : tous les B2P prévus
+    // apparaissent dessus (point 1 du boss).
+    const savedIndices = allSavedIndices.filter((i) => i <= activeIndex);
+
+    // Échelle Y : max parmi les valeurs visibles (= saisies jusqu'au B2P actif)
+    // + BI (qui sert de plancher). L'échelle ne bouge pas selon les futurs.
     const rawMax = Math.max(
       1,
       totalBI,
-      ...timeline.filter((p) => p.saved).flatMap((p) => [p.bad ?? 0, p.depenses ?? 0, p.va ?? 0, p.cp ?? 0]),
+      ...savedIndices.flatMap((i) => {
+        const p = timeline[i];
+        return [p.bad ?? 0, p.depenses ?? 0, p.va ?? 0, p.cp ?? 0];
+      }),
     );
     const maxY = rawMax * 1.1;
 
@@ -340,21 +353,24 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
         <line x1={pad.l} y1={pad.t} x2={pad.l} y2={H - pad.b} stroke={COLORS.axis} strokeWidth="1.2" />
         <line x1={pad.l} y1={H - pad.b} x2={W - pad.r} y2={H - pad.b} stroke={COLORS.axis} strokeWidth="1.2" />
 
-        {/* Labels X — TOUS les B2P prévus apparaissent (point 1 du boss) */}
+        {/* Labels X — TOUS les B2P prévus apparaissent (point 1 du boss).
+            Les B2P après le B2P consulté (= « futurs » non encore atteints)
+            ont une typo en italique discrète pour distinguer du présent. */}
         {data.timeline.map((point, index) => {
           const xx = x(index);
-          const isFuture = !point.saved;
+          const isPast = index <= data.activeIndex;
           const isActive = index === data.activeIndex;
           return (
             <g key={`label-${point.numero}-${index}`}>
-              <line x1={xx} y1={H - pad.b} x2={xx} y2={H - pad.b + 4} stroke={COLORS.axis} opacity={isFuture ? 0.5 : 1} />
+              <line x1={xx} y1={H - pad.b} x2={xx} y2={H - pad.b + 4} stroke={COLORS.axis} opacity={isPast ? 1 : 0.6} />
               <text
                 x={xx}
                 y={H - pad.b + 18}
                 textAnchor="middle"
                 fontSize="10"
                 fontWeight={isActive ? "700" : "600"}
-                fill={isFuture ? COLORS.textFuture : COLORS.textSecondary}
+                fontStyle={isPast ? "normal" : "italic"}
+                fill={isPast ? COLORS.textSecondary : COLORS.textFuture}
               >
                 {point.label}
               </text>
@@ -363,7 +379,8 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
                 y={H - pad.b + 31}
                 textAnchor="middle"
                 fontSize="9"
-                fill={isFuture ? COLORS.textFuture : COLORS.textMuted}
+                fontStyle={isPast ? "normal" : "italic"}
+                fill={isPast ? COLORS.textMuted : COLORS.textFuture}
               >
                 {formatDateFR(point.date)}
               </text>
