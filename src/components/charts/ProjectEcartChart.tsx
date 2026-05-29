@@ -9,7 +9,7 @@ import { getCostUnitLabel } from "@/lib/projectLabels";
 import type { BilanPilotage, Projet } from "@/types/projet";
 
 /* ───────────────────────────────────────────────────────────────────────────
-   Refonte v4 — Demande du boss :
+   Refonte v5 — NT.26.011 :
    ─────────────────────────────────────────────────────────────────────────────
    1. TOUS les B2P prévus sur l'axe horizontal (échelle fixe, ne change pas
       selon le B2P consulté). Les B2P futurs (non encore saisis) sont
@@ -17,9 +17,10 @@ import type { BilanPilotage, Projet } from "@/types/projet";
       courbes.
    2. Les courbes s'allongent de B2P en B2P au fur et à mesure des saisies
       (du B2P0 jusqu'au dernier B2P saisi, pas tronquées au B2P actif).
-   3. Vc et É RETIRÉS du graphique : suppression des mini-flèches, du
-      panneau latéral droit et de la zone d'écart ombrée.
-   4. Indicateurs et couleurs des courbes inchangés :
+   3. BàD et CP tracés dès qu'un B2P est démarré (même sans actuals).
+      Dépenses et VA uniquement quand des actuals sont saisis.
+   4. Labels de fin : E= et Vc= (à la place des 4 étiquettes de courbe).
+   5. Indicateurs et couleurs des courbes inchangés :
         BàD #111827, Dépenses #BE123C, VA #3730A3, CP #047857, BI #1F4E79.
    ─────────────────────────────────────────────────────────────────────────── */
 
@@ -45,12 +46,14 @@ type Props = {
 };
 
 /** Un point sur la timeline = une position sur l'axe X.
- *  Si `saved=true`, il porte les valeurs agrégées ; sinon c'est un label seul. */
+ *  `badSaved=true` : BàD/CP traçables (bilan démarré, même sans actuals).
+ *  `saved=true`    : actuals saisis (Dépenses/VA traçables). */
 type TimelinePoint = {
   numero: number;
   date: string;
   label: string;
   bilanId?: string;
+  badSaved: boolean;
   saved: boolean;
   isBaseline?: boolean;
   bad?: number;
@@ -107,15 +110,12 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
     // Toutes les dates planifiées (B2P0 + tous les B2P i-1)
     const plannedDates = getProjectPlannedB2PDates(projet);
 
-    // Pour chaque numero (0..N), on cherche le bilan i-1 ou b2p0 correspondant
+    // Pour chaque numero (0..N), on cherche le bilan i-1 ou b2p0 correspondant.
+    // On utilise toujours i-1 (jamais i-2) pour la cohérence de la timeline :
+    // le slot numero=N porte toujours le B2Pi-1 officiel.
     const bilans = sortBilans(projet.bilans ?? []);
     const findBilan = (numero: number): BilanPilotage | undefined => {
-      if (numero === 0) {
-        return bilans.find((b) => getBilanKind(b) === "b2p0");
-      }
-      // Préférer i-2 retenu si présent, sinon i-1
-      const retenu = bilans.find((b) => Number(b.numero) === numero && getBilanKind(b) === "i-2");
-      if (retenu) return retenu;
+      if (numero === 0) return bilans.find((b) => getBilanKind(b) === "b2p0");
       return bilans.find((b) => Number(b.numero) === numero && getBilanKind(b) === "i-1");
     };
 
@@ -123,26 +123,33 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
       const bilan = findBilan(numero);
       const fallbackLabel = numero === 0 ? "B2P0" : `B2P n°${numero}-1`;
       if (!bilan) {
-        return { numero, date, label: fallbackLabel, saved: false };
+        // Slot sans bilan : juste un label sur l'axe X, pas de courbe
+        return { numero, date, label: fallbackLabel, badSaved: false, saved: false };
       }
       const isBaseline = getBilanKind(bilan) === "b2p0";
-      // B2P0 est toujours "saved" car il porte la référence initiale (BI)
+      // Date affichée = date planifiée (b2pDates) — corrigée par l'utilisateur
       const empty = !isBaseline && isBilanEmpty(bilan);
+      const aggregate = aggregateBilan(projet, bilan);
+
       if (empty) {
+        // Bilan démarré mais sans actuals : BàD et CP traçables, pas Dép/VA
         return {
           numero,
-          date: bilan.triggerDate ?? bilan.date ?? date,
+          date,
           label: getBilanLabel(bilan),
           bilanId: bilan.id,
+          badSaved: true,
           saved: false,
+          bad: aggregate.totalBudgetADate,
+          cp: aggregate.totalBudgetADate, // CP = BàD quand pas d'actuals
         };
       }
-      const aggregate = aggregateBilan(projet, bilan);
       return {
         numero,
-        date: bilan.triggerDate ?? bilan.date ?? date,
+        date,
         label: getBilanLabel(bilan),
         bilanId: bilan.id,
+        badSaved: true,
         saved: true,
         isBaseline,
         bad: aggregate.totalBudgetADate,
@@ -152,39 +159,51 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
       };
     });
 
-    // Indices saved (TOUS les bilans saisis, indépendamment du B2P consulté)
+    // Indices "badSaved" : bilans démarrés (BàD/CP traçables même si vides)
+    const allBadSavedIndices = timeline
+      .map((p, i) => (p.badSaved ? i : -1))
+      .filter((i) => i >= 0);
+
+    // Indices "saved" : bilans avec actuals (Dépenses/VA traçables)
     const allSavedIndices = timeline
       .map((p, i) => (p.saved ? i : -1))
       .filter((i) => i >= 0);
 
-    // Index du B2P actif (consulté). Si l'id ne match pas, on prend le dernier saisi.
+    // Index du B2P actif. Recherche directe par bilanId (i-1 uniquement dans
+    // la timeline), puis fallback par numero (si le bilan actif est i-2j/i-2).
     let activeIndex = activeBilanId
       ? timeline.findIndex((p) => p.bilanId === activeBilanId)
       : -1;
+    if (activeIndex < 0 && activeBilanId) {
+      const activeBilan = bilans.find((b) => b.id === activeBilanId);
+      if (activeBilan) {
+        activeIndex = timeline.findIndex((p) => p.numero === Number(activeBilan.numero ?? 0));
+      }
+    }
     if (activeIndex < 0) {
-      activeIndex = allSavedIndices.length > 0 ? allSavedIndices[allSavedIndices.length - 1] : 0;
+      activeIndex = allBadSavedIndices.length > 0 ? allBadSavedIndices[allBadSavedIndices.length - 1] : 0;
     }
 
-    // §3 (NT.26.008) — Historisation des courbes : les courbes s'allongent de
-    // B2P en B2P au fur et à mesure que l'on consulte un B2P plus récent.
-    // Donc on borne les courbes à l'index du B2P consulté (et pas au dernier
-    // saisi globalement). L'AXE X reste lui inchangé : tous les B2P prévus
-    // apparaissent dessus (point 1 du boss).
-    const savedIndices = allSavedIndices.filter((i) => i <= activeIndex);
+    // Historisation : borner les courbes à l'index du B2P consulté.
+    const badSavedIndices = allBadSavedIndices.filter((i) => i <= activeIndex);
+    const savedIndices    = allSavedIndices.filter((i) => i <= activeIndex);
 
-    // Échelle Y : max parmi les valeurs visibles (= saisies jusqu'au B2P actif)
-    // + BI (qui sert de plancher). L'échelle ne bouge pas selon les futurs.
+    // Échelle Y : max parmi toutes les valeurs visibles + BI.
     const rawMax = Math.max(
       1,
       totalBI,
+      ...badSavedIndices.flatMap((i) => {
+        const p = timeline[i];
+        return [p.bad ?? 0, p.cp ?? 0];
+      }),
       ...savedIndices.flatMap((i) => {
         const p = timeline[i];
-        return [p.bad ?? 0, p.depenses ?? 0, p.va ?? 0, p.cp ?? 0];
+        return [p.depenses ?? 0, p.va ?? 0];
       }),
     );
     const maxY = rawMax * 1.1;
 
-    return { timeline, savedIndices, activeIndex, maxY, totalBI };
+    return { timeline, badSavedIndices, savedIndices, activeIndex, maxY, totalBI };
   }, [activeBilanId, projet]);
 
   if (data.timeline.length === 0) {
@@ -221,18 +240,25 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
   const focusIndex = hoverIndex !== null ? hoverIndex : data.activeIndex;
   const focusPoint = data.timeline[focusIndex];
 
-  // End labels : sur le DERNIER point saisi (pas sur le B2P actif)
-  const lastSavedIndex = data.savedIndices.length > 0 ? data.savedIndices[data.savedIndices.length - 1] : -1;
-  const lastSaved = lastSavedIndex >= 0 ? data.timeline[lastSavedIndex] : null;
-  const lastSavedX = lastSavedIndex >= 0 ? x(lastSavedIndex) : pad.l;
+  // Dernier point avec actuals (pour E=, Vc= et positionnement des labels)
+  const lastActualIndex = data.savedIndices.length > 0 ? data.savedIndices[data.savedIndices.length - 1] : -1;
+  const lastActual = lastActualIndex >= 0 ? data.timeline[lastActualIndex] : null;
+  const lastActualX = lastActualIndex >= 0 ? x(lastActualIndex) : pad.l;
 
-  // Construire les paths des courbes (sur saved seulement)
+  // BàD et CP : tracés sur tous les bilans démarrés (même vides)
   const badPath = smoothPath(
-    data.savedIndices,
-    data.savedIndices.map((i) => data.timeline[i].bad ?? 0),
+    data.badSavedIndices,
+    data.badSavedIndices.map((i) => data.timeline[i].bad ?? 0),
     x,
     y,
   );
+  const cpPath = smoothPath(
+    data.badSavedIndices,
+    data.badSavedIndices.map((i) => data.timeline[i].cp ?? 0),
+    x,
+    y,
+  );
+  // Dépenses et VA : tracés uniquement sur les bilans avec actuals
   const depPath = smoothPath(
     data.savedIndices,
     data.savedIndices.map((i) => data.timeline[i].depenses ?? 0),
@@ -245,33 +271,28 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
     x,
     y,
   );
-  const cpPath = smoothPath(
-    data.savedIndices,
-    data.savedIndices.map((i) => data.timeline[i].cp ?? 0),
-    x,
-    y,
-  );
 
-  // End labels pour les 4 séries (sur le dernier saved)
+  // End labels : E= (Écart final) et Vc= (Variance Coût) sur le dernier actual
   let endLabels: { key: string; color: string; label: string; value: number; yRaw: number }[] = [];
-  if (lastSaved) {
+  if (lastActual && lastActual.bad !== undefined && lastActual.cp !== undefined) {
+    const eVal  = (lastActual.cp ?? 0) - (lastActual.bad ?? 0);
+    const vcVal = (lastActual.depenses ?? 0) - (lastActual.va ?? 0);
+    const eColor  = eVal  > 0 ? "#dc2626" : "#059669";
+    const vcColor = vcVal > 0 ? "#dc2626" : "#059669";
     endLabels = [
-      { key: "bad", color: COLORS.bad, label: "BàD", value: lastSaved.bad ?? 0 },
-      { key: "cp", color: COLORS.cp, label: "CP", value: lastSaved.cp ?? 0 },
-      { key: "depenses", color: COLORS.depenses, label: "Dép.", value: lastSaved.depenses ?? 0 },
-      { key: "va", color: COLORS.va, label: "VA", value: lastSaved.va ?? 0 },
-    ].map((s) => ({ ...s, yRaw: y(s.value) }));
+      { key: "e",  color: eColor,  label: "E =",  value: eVal,  yRaw: y(((lastActual.bad ?? 0) + (lastActual.cp ?? 0)) / 2) },
+      { key: "vc", color: vcColor, label: "Vc =", value: vcVal, yRaw: y(((lastActual.depenses ?? 0) + (lastActual.va ?? 0)) / 2) },
+    ];
     endLabels.sort((a, b) => a.yRaw - b.yRaw);
-    // Anti-chevauchement (min 18px d'écart vertical)
     for (let i = 1; i < endLabels.length; i++) {
-      const prev = endLabels[i - 1];
-      if (endLabels[i].yRaw - prev.yRaw < 18) endLabels[i].yRaw = prev.yRaw + 18;
+      if (endLabels[i].yRaw - endLabels[i - 1].yRaw < 20) endLabels[i].yRaw = endLabels[i - 1].yRaw + 20;
     }
   }
 
-  // Légende — chaque item reflète le motif de la courbe (plein / tirets / pointillés)
+  // Légende — chaque item reflète le motif de la courbe
+  // Convention FGF NT.26.011 : BàD = tiret-point, CP = plein
   const legendItems = [
-    { color: COLORS.bad, label: "BàD", dash: "" },
+    { color: COLORS.bad, label: "BàD", dash: "8 3 2 3" },
     { color: COLORS.depenses, label: "Dépenses", dash: "7 4" },
     { color: COLORS.va, label: "Valeur acquise", dash: "1.5 4" },
     { color: COLORS.cp, label: "CP", dash: "" },
@@ -298,7 +319,7 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
 
         {/* En-tête */}
         <text x={pad.l} y="30" fontSize="17" fontWeight="700" fill={COLORS.textPrimary}>
-          Méthode FGF des Courbes en S
+          Méthode FGF de Coûtenance
         </text>
         <text x={pad.l} y="46" fontSize="11" fill={COLORS.textSecondary}>
           {projet.nom} · unité : {unit}
@@ -402,23 +423,20 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
         )}
 
         {/* Courbes lissées (du B2P0 jusqu'au B2P consulté).
-            Convention FGF (modèle PDF) :
-              - BàD : trait plein noir  → données déterministes (budget)
-              - CP  : trait plein vert  → données déterministes (prévision)
-              - Dépenses    : tirets rouges (- - -) → données mesurées (réalisé)
-              - VA          : pointillés bleus (....) → données mesurées (acquis)
-            Ordre de dessin : on met BàD EN DERNIER (sur le dessus). Si BàD
-            et CP se superposent (variation = 0 au début), c'est la ligne
-            BàD qu'on voit, comme dans le modèle PDF où BàD = horizontale BI. */}
+            Convention FGF NT.26.011 :
+              - BàD : tiret-point noir  (─·─·─) → données déterministes (budget)
+              - CP  : trait plein vert            → données déterministes (prévision)
+              - Dépenses : tirets rouges (─ ─ ─) → données mesurées (réalisé)
+              - VA        : pointillés bleus (···) → données mesurées (acquis)
+            BàD et CP tracés dès le démarrage du B2P (même sans actuals).
+            Dépenses et VA uniquement quand des actuals sont saisis.
+            BàD dessinée EN DERNIER (sur le dessus). */}
         <path d={depPath} fill="none" stroke={COLORS.depenses} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="7 4" filter="url(#curveShadow)" />
         <path d={vaPath} fill="none" stroke={COLORS.va} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="1.5 4" filter="url(#curveShadow)" />
         <path d={cpPath} fill="none" stroke={COLORS.cp} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#curveShadow)" />
-        <path d={badPath} fill="none" stroke={COLORS.bad} strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" filter="url(#curveShadow)" />
+        <path d={badPath} fill="none" stroke={COLORS.bad} strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="8 3 2 3" filter="url(#curveShadow)" />
 
-        {/* Marqueurs : SEULEMENT sur les B2P saisis ET dans l'historique
-            (jusqu'au B2P consulté). Bornage à activeIndex pour respecter
-            l'historisation des courbes (sinon on voyait des points isolés
-            aux B2P futurs sans courbe qui les relie). */}
+        {/* Marqueurs : uniquement sur les B2P avec actuals (saved), dans l'historique */}
         {data.timeline.map((point, index) => {
           if (!point.saved) return null;
           if (index > data.activeIndex) return null;
@@ -438,14 +456,14 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
           );
         })}
 
-        {/* End labels — collés au dernier point saisi */}
-        {lastSaved && endLabels.map((s) => (
+        {/* End labels — E= et Vc= sur le dernier actual */}
+        {lastActual && endLabels.map((s) => (
           <g key={s.key}>
-            <line x1={lastSavedX} y1={y(s.value)} x2={lastSavedX + 8} y2={s.yRaw} stroke={s.color} strokeWidth="1" opacity="0.5" />
+            <line x1={lastActualX} y1={s.yRaw} x2={lastActualX + 8} y2={s.yRaw} stroke={s.color} strokeWidth="1" opacity="0.5" />
             <rect
-              x={lastSavedX + 10}
+              x={lastActualX + 10}
               y={s.yRaw - 9}
-              width="64"
+              width="88"
               height="18"
               rx="4"
               fill="#FFFFFF"
@@ -453,7 +471,7 @@ export function ProjectEcartChart({ projet, activeBilanId }: Props) {
               strokeWidth="1.3"
             />
             <text
-              x={lastSavedX + 16}
+              x={lastActualX + 16}
               y={s.yRaw + 4}
               fontSize="10.5"
               fontWeight="700"

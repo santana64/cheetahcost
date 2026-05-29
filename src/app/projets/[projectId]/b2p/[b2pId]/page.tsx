@@ -229,7 +229,29 @@ export default function B2PPage() {
   const bilan = undo?.present ?? null;
   const bilansSorted = useMemo(() => (project ? sortBilans(project.bilans ?? []) : []), [project]);
   const currentIndex = useMemo(() => (bilan ? bilansSorted.findIndex((candidate) => candidate.id === bilan.id) : -1), [bilan, bilansSorted]);
-  const previousBilan = currentIndex > 0 ? bilansSorted[currentIndex - 1] : null;
+
+  // §NT.26.011 — Logique éPrec :
+  //   T2Pi-1   : éPrec = E(T2P(i-1)-2) si existe, sinon E(T2P(i-1)-1)
+  //   T2Pi-2j  : éPrec = E(T2Pi-1)
+  //   T2Pi-2   : éPrec = E(T2P(i-1)-2) si existe, sinon E(T2P(i-1)-1)
+  const previousBilan = useMemo(() => {
+    if (!bilan || !project) return null;
+    const kind = getBilanKind(bilan);
+    const numero = Number(bilan.numero ?? 0);
+    const allBilans = project.bilans ?? [];
+
+    if (kind === "i-2") {
+      // T2Pi-2 compare avec le même référentiel que T2Pi-1 : T2P(i-1)-2 ou T2P(i-1)-1
+      const prevNumero = numero - 1;
+      if (prevNumero === 0) return allBilans.find((b) => getBilanKind(b) === "b2p0") ?? null;
+      const prevI2 = allBilans.find((b) => Number(b.numero) === prevNumero && getBilanKind(b) === "i-2");
+      if (prevI2) return prevI2;
+      return allBilans.find((b) => Number(b.numero) === prevNumero && getBilanKind(b) === "i-1") ?? null;
+    }
+
+    // Pour i-1 et i-2j : ordre trié (i-2j suit i-1 du même B2P ; i-1 suit i-2 du B2P précédent)
+    return currentIndex > 0 ? bilansSorted[currentIndex - 1] : null;
+  }, [bilan, project, bilansSorted, currentIndex]);
   const canPrev = currentIndex > 0;
   const canNext = currentIndex >= 0 && currentIndex < bilansSorted.length - 1;
   const summary = useMemo(() => (project && bilan ? aggregateBilan(project, bilan) : null), [project, bilan]);
@@ -588,7 +610,7 @@ export default function B2PPage() {
                 src="/logo-fgf.png"
                 alt="FGF"
                 title="FGF — Management de Projet"
-                style={{ height: 18, width: "auto", display: "block" }}
+                style={{ height: 18, width: "auto", display: "block", flexShrink: 0, objectFit: "contain" }}
               />
               <span className="max-w-[150px] truncate text-[11px] font-semibold text-slate-700">
                 {project.nom}
@@ -917,7 +939,7 @@ export default function B2PPage() {
                   src="/logo-fgf.png"
                   alt="FGF — Management de Projet, Recherche · Conseil · Formation"
                   title="FGF — Management de Projet"
-                  style={{ height: 28, width: "auto", display: "block" }}
+                  style={{ height: 28, width: "auto", display: "block", flexShrink: 0, objectFit: "contain" }}
                 />
                 <span>Méthode FGF de Coûtenance — CheetahCost</span>
               </span>
@@ -928,7 +950,7 @@ export default function B2PPage() {
                   src="/logo-fgf.png"
                   alt="FGF — Management de Projet"
                   title="FGF — Management de Projet"
-                  style={{ height: 28, width: "auto", display: "block" }}
+                  style={{ height: 28, width: "auto", display: "block", flexShrink: 0, objectFit: "contain" }}
                 />
               </span>
             </div>

@@ -257,7 +257,7 @@ export default function ProjectPage() {
     if (hasB2P0) { pushToast("info", "B2P0 existe déjà."); return; }
     const b2p0 = buildInitialB2P0(project);
     const updated = { ...project, bilans: [b2p0, ...(project.bilans ?? [])] };
-    persist(updated, "B2P0 créé.", { action: "b2p_created", label: "B2P0 créé", bilanId: b2p0.id });
+    persist(updated, "B2P0 démarré.", { action: "b2p_created", label: "B2P0 démarré", bilanId: b2p0.id });
     router.push(`/projets/${project.id}/b2p/${b2p0.id}`);
   };
 
@@ -265,7 +265,7 @@ export default function ProjectPage() {
     if (!project) return;
     const next = buildNextI1Table(project);
     const updated = { ...project, bilans: [...(project.bilans ?? []), next] };
-    persist(updated, `${getBilanLabel(next)} créé.`, { action: "b2p_created", label: `${getBilanLabel(next)} créé`, bilanId: next.id });
+    persist(updated, `${getBilanLabel(next)} démarré.`, { action: "b2p_created", label: `${getBilanLabel(next)} démarré`, bilanId: next.id });
     router.push(`/projets/${project.id}/b2p/${next.id}`);
   };
 
@@ -505,10 +505,10 @@ export default function ProjectPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="secondary" size="sm" onClick={ensureB2P0}>
-                  Créer B2P0
+                  Démarrer B2P0
                 </Button>
                 <Button size="sm" iconLeft={<FiFilePlus size={12} />} onClick={createNextI1}>
-                  Nouveau B2P i-1
+                  Démarrer B2P suivant
                 </Button>
               </div>
             </div>
@@ -604,7 +604,7 @@ export default function ProjectPage() {
                       />
                       <div className="mt-2 flex items-center justify-between text-[10px]">
                         <span className={created ? "font-semibold text-emerald-700" : "text-slate-400"}>
-                          {created ? "✓ Tableau créé" : "À créer"}
+                          {created ? "✓ Tableau démarré" : "À démarrer"}
                         </span>
                         <span className="text-slate-400">{formatDateFR(date)}</span>
                       </div>

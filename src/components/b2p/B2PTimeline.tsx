@@ -78,7 +78,7 @@ export function B2PTimeline({ project, activeBilanId }: B2PTimelineProps) {
         </div>
         <p className="text-[13px] font-semibold text-slate-600">Aucun tableau B2P</p>
         <p className="mt-1 text-[11px] text-slate-400">
-          Commencez par créer le B2P0 (situation initiale)
+          Commencez par démarrer le B2P0 (situation initiale)
         </p>
       </div>
     );
@@ -192,7 +192,7 @@ export function B2PTimeline({ project, activeBilanId }: B2PTimelineProps) {
                 </div>
               ) : (
                 <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-3 text-[11px] italic text-slate-400">
-                  Tableau créé — données non encore saisies
+                  Tableau démarré — données non encore saisies
                 </div>
               )}
 
